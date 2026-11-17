@@ -4,41 +4,43 @@
 
 # NEON BAY — HEAT
 
-An original 2D top-down getaway game in vanilla JavaScript and HTML5 canvas.
-No external libraries, no network requests, no asset files — even the music
-and sound effects are synthesised live with WebAudio. Progress saves to
-localStorage.
+An original 2D top-down open-world driving and action game that runs
+entirely in the browser. No libraries, no assets, no network requests —
+vanilla JavaScript ES modules, a canvas renderer, synthesised WebAudio
+sound, and a `localStorage` save.
 
-Welcome to **Neon Bay**, a sunset coastal city of neon streets split into four
-districts: **Marina**, **Downtown**, **Barrio** and **Portside**. You are
-**Jax Marlowe**, an ex-getaway driver pulled back in by your contact **Rae**
-for one chain of jobs: a first getaway, a repo job, a cross-town package run,
-and a finale chase to the escape boat.
+Welcome to **Neon Bay**, a sunset-and-neon beach city split into four
+districts: **Marina**, **Downtown**, **Barrio**, and **Portside**.
+You are **Jax Marlowe**, an ex-getaway driver trying to go straight.
+Your old contact **Rae** has four last jobs — and every job raises the
+**HEAT**.
 
 ## The HEAT system
 
-This is the HEAT variant, built around its wanted system:
+- Wanted level from 1 to 5 stars. Stealing cars, crashing, hitting
+  pedestrians, assaults and gunfire all raise your heat.
+- Police interceptors chase, ram, and — at higher heat — move to block
+  the road ahead of you.
+- Roadblocks appear at 3 stars and above. A police helicopter joins
+  the pursuit at 5 stars and keeps eyes on you from above.
+- Break line of sight to cool down: hide, ditch the hot car, or swap
+  into a clean ride and your stars fall one by one.
+- Get cornered on foot for too long and you are busted — Rae bails
+  you out at the Marina plaza, minus a fine.
 
-- Crimes raise your wanted level from 1 to 5 stars: stealing cars, hitting
-  pedestrians or traffic, punching and shooting.
-- Police pursue with real pursuit AI — chasing, ramming and trying to block
-  your path. Their cars are proper police cars, on the road and on the minimap.
-- Roadblocks appear at 3 stars and above. A police helicopter joins at 5 stars.
-- Wanted level decays slowly when you break line of sight. Hiding — or
-  swapping into a different car — helps you lose the heat.
+## Gameplay
 
-## Features
-
-- On-foot and driving gameplay; any parked or traffic car can be stolen.
-- Three civilian vehicle types with distinct handling — sedan, sport and
-  truck/van — plus police interceptors. Vehicles take damage, smoke and explode.
-- Traffic AI and wandering pedestrians who flee from danger.
-- Punch and pistol combat, player health, busted/wasted flow.
-- A four-mission story chain with HUD objectives, world markers and a minimap.
-- HUD with health bar, wanted stars, cash and mission text; a live minimap
-  canvas showing the city, player, police and the current objective.
-- Smooth follow camera, start screen with load-save, pause menu and save button.
-- Deterministic screenshot mode via `?shot=<name>&seed=<n>` for testing.
+- Walk and drive a full road-grid city with traffic AI and pedestrians.
+- Steal any car: sedans, sport coupes, and trucks/vans, each with its
+  own acceleration, top speed, turning, grip, and health.
+- Cars take damage, smoke, burn, and explode.
+- Punch and pistol combat; hostile crews shoot back during jobs.
+- A four-mission chain from Rae: **First Wheels** (tutorial getaway),
+  **Repo Run**, **Cross-Bay Package**, and the five-star
+  **Neon Finale**, with world markers, a minimap, and cash rewards.
+- HUD with health, wanted stars, money, mission objective text, a
+  live minimap (city, player, police, objective), start screen,
+  pause menu, and save/load.
 
 ## Run it
 
@@ -48,24 +50,27 @@ node serve.ts
 
 Then open http://localhost:8080 in a browser.
 
-You can also open `game/index.html` through any static file server.
-
 ## Controls
 
-- **WASD / arrow keys** — walk or drive
+- **WASD / arrow keys** — walk / drive
 - **E** — enter / exit a car (stand next to one to steal it)
 - **F** — punch
-- **Space** — shoot pistol
-- **P** — pause / resume
-- **M** — mute / unmute
+- **Space** — shoot
+- **Enter** — start the next mission
+- **P** — pause
+- **M** — mute
 
 ## Screenshots
 
-Run the deterministic smoke test and screenshot capture (Node built-ins plus
-a local headless Chrome):
+Deterministic screenshot scenes are defined in `shots.json` and can be
+regenerated with:
 
 ```sh
 node tools/shoot.mjs
 ```
+
+Scenes: `start` (title screen), `street` (on foot with HUD and
+minimap), `chase` (in a car at 3+ stars with real police cars in
+pursuit), and `mission` (active mission objective on the HUD).
 
 <sub>Entered on [make.fun](https://make.fun/?ref=ncwdmcz4&utm_source=github&utm_medium=readme&utm_campaign=gta6-01) · AI agents build software for cash rewards</sub>

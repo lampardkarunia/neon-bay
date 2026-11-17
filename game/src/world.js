@@ -1,86 +1,144 @@
-// world.js — Neon Bay city layout: road grid, blocks, props, collision helpers
-import { CONFIG } from "./config.js";
+// world.js - Procedural city of Neon Bay: road grid, buildings, districts.
+// The city is deterministic for a given RNG so screenshots are stable.
 
-export function createWorld(rng) {
-  const roadsX = [];
-  const roadsY = [];
-  for (let x = 100; x < CONFIG.worldWidth; x += CONFIG.tileRoad) roadsX.push(x);
-  for (let y = 100; y < CONFIG.worldHeight; y += CONFIG.tileRoad) roadsY.push(y);
-  const buildings = [];
-  const palms = [];
-  const lamps = [];
-  for (let bx = 0; bx < CONFIG.worldWidth; bx += CONFIG.tileRoad) {
-    for (let by = 0; by < CONFIG.worldHeight; by += CONFIG.tileRoad) {
-      const w = 130, h = 130, x = bx + 35, y = by + 35;
-      const palette = ["#26324a", "#33244d", "#4d2c33", "#24403a", "#3a3f5c", "#513252", "#2e4a5c"];
-      buildings.push({ x, y, w, h, color: rng.pick(palette), floors: rng.int(2, 9), neon: rng.pick(["#ff2e88", "#00e5ff", "#ffe600", "#7c4dff", "#00ff9d", "#ff6d00"]) });
-      if (rng.chance(0.6)) palms.push({ x: bx + rng.range(10, 180), y: by + rng.range(10, 180) });
-      if (rng.chance(0.8)) lamps.push({ x: bx + 100, y: by + 100 });
+import { WORLD_WIDTH, WORLD_HEIGHT, BLOCK_SIZE, ROAD_WIDTH, DISTRICTS, COLORS } from "./config.js";
+
+export function roadCenters() {
+  const centers = [];
+  for (let c = BLOCK_SIZE / 2; c < WORLD_WIDTH; c += BLOCK_SIZE) centers.push(c);
+  return centers;
+}
+
+export function isOnRoad(x, y) {
+  const half = ROAD_WIDTH / 2;
+  const mx = ((x % BLOCK_SIZE) + BLOCK_SIZE) % BLOCK_SIZE;
+  const my = ((y % BLOCK_SIZE) + BLOCK_SIZE) % BLOCK_SIZE;
+  const centre = BLOCK_SIZE / 2;
+  const nearVerticalRoad = Math.abs(mx - centre) < half;
+  const nearHorizontalRoad = Math.abs(my - centre) < half;
+  return nearVerticalRoad || nearHorizontalRoad;
+}
+
+export function nearestRoadPoint(x, y) {
+  const cx = Math.round((x - BLOCK_SIZE / 2) / BLOCK_SIZE) * BLOCK_SIZE + BLOCK_SIZE / 2;
+  const cy = Math.round((y - BLOCK_SIZE / 2) / BLOCK_SIZE) * BLOCK_SIZE + BLOCK_SIZE / 2;
+  if (Math.abs(x - cx) < Math.abs(y - cy)) return { x: cx, y };
+  return { x, y: cy };
+}
+
+export function districtAt(x, y) {
+  const east = x >= WORLD_WIDTH / 2;
+  const south = y >= WORLD_HEIGHT / 2;
+  if (!east && !south) return DISTRICTS[0]; // Marina, north-west
+  if (east && !south) return DISTRICTS[1];  // Downtown, north-east
+  if (!east && south) return DISTRICTS[2];  // Barrio, south-west
+  return DISTRICTS[3];                       // Portside, south-east
+}
+
+export function districtIndexAt(x, y) {
+  const d = districtAt(x, y);
+  return DISTRICTS.findIndex((entry) => entry.name === d.name);
+}
+
+export class World {
+  constructor(rng) {
+    this.width = WORLD_WIDTH;
+    this.height = WORLD_HEIGHT;
+    this.buildings = [];
+    this.trees = [];
+    this.lamps = [];
+    this.props = [];
+    this.buildCity(rng);
+  }
+
+  buildCity(rng) {
+    const blocksPerSide = Math.floor(WORLD_WIDTH / BLOCK_SIZE);
+    for (let bx = 0; bx < blocksPerSide; bx++) {
+      for (let by = 0; by < blocksPerSide; by++) {
+        const blockX = bx * BLOCK_SIZE;
+        const blockY = by * BLOCK_SIZE;
+        // Each block holds 2x2 buildings with a small plaza gap.
+        for (let i = 0; i < 2; i++) {
+          for (let j = 0; j < 2; j++) {
+            if (rng.chance(0.12)) continue;
+            const w = rng.range(62, 96);
+            const h = rng.range(62, 96);
+            const x = blockX + 28 + i * 118 + rng.range(-6, 6);
+            const y = blockY + 28 + j * 118 + rng.range(-6, 6);
+            // Keep the spawn plaza (centre-west) clear.
+            if (Math.abs(x + w / 2 - 480) < 120 && Math.abs(y + h / 2 - 480) < 120) continue;
+            this.buildings.push({
+              x, y, w, h,
+              color: rng.pick(COLORS.buildingRoof),
+              floors: rng.int(2, 9),
+              neon: rng.chance(0.45),
+              name: rng.pick(["Cafe", "Hotel", "Garage", "Bar", "Shop", "Gym", "Clinic", "Studio"]),
+            });
+          }
+        }
+        if (rng.chance(0.7)) {
+          this.trees.push({ x: blockX + rng.range(30, 290), y: blockY + rng.range(30, 290), r: rng.range(9, 15) });
+        }
+        this.lamps.push({ x: blockX + BLOCK_SIZE / 2 - ROAD_WIDTH / 2 - 8, y: blockY + BLOCK_SIZE / 2 });
+        this.lamps.push({ x: blockX + BLOCK_SIZE / 2 + ROAD_WIDTH / 2 + 8, y: blockY + BLOCK_SIZE / 2 });
+      }
     }
+    // Beach strip along the west edge and a marina pier.
+    this.props.push({ kind: "beach", x: 0, y: 0, w: 56, h: WORLD_HEIGHT });
+    this.props.push({ kind: "pier", x: 0, y: 900, w: 150, h: 26 });
+    this.props.push({ kind: "pier", x: 0, y: 1250, w: 150, h: 26 });
   }
-  function isOnRoad(pos) {
-    const near = (v, arr) => arr.some((r) => Math.abs(v - r) < 34);
-    return near(pos.x, roadsX) || near(pos.y, roadsY);
-  }
-  function collidesBuilding(pos, radius) {
-    for (const b of buildings) {
-      if (pos.x + radius > b.x && pos.x - radius < b.x + b.w && pos.y + radius > b.y && pos.y - radius < b.y + b.h) return b;
+
+  buildingAt(x, y, radius) {
+    for (const b of this.buildings) {
+      if (x + radius > b.x && x - radius < b.x + b.w && y + radius > b.y && y - radius < b.y + b.h) return b;
     }
     return null;
   }
-  function clampToWorld(pos, radius) {
-    pos.x = Math.max(radius, Math.min(CONFIG.worldWidth - radius, pos.x));
-    pos.y = Math.max(radius, Math.min(CONFIG.worldHeight - radius, pos.y));
+
+  collides(x, y, radius) {
+    if (x < radius || y < radius || x > this.width - radius || y > this.height - radius) return true;
+    return this.buildingAt(x, y, radius) !== null;
   }
-  function districtAt(pos) {
-    for (const d of CONFIG.districts) if (pos.x >= d.x && pos.x < d.x + d.w && pos.y >= d.y && pos.y < d.y + d.h) return d;
-    return CONFIG.districts[0];
-  }
-  function nearestRoadPoint(pos) {
-    let best = { x: pos.x, y: pos.y }, bestD = Infinity;
-    for (const rx of roadsX) { const d = Math.abs(pos.x - rx); if (d < bestD) { bestD = d; best = { x: rx, y: pos.y }; } }
-    for (const ry of roadsY) { const d = Math.abs(pos.y - ry); if (d < bestD) { bestD = d; best = { x: pos.x, y: ry }; } }
-    return best;
-  }
-  return { roadsX, roadsY, buildings, palms, lamps, isOnRoad, collidesBuilding, clampToWorld, districtAt, nearestRoadPoint };
-}
-export function drawWorldBase(ctx, world, camera) {
-  const g = ctx.createLinearGradient(0, 0, 0, CONFIG.canvasHeight);
-  g.addColorStop(0, "#1a1033"); g.addColorStop(0.55, "#3d1e4d"); g.addColorStop(1, "#0d2b3d");
-  ctx.fillStyle = g; ctx.fillRect(0, 0, CONFIG.canvasWidth, CONFIG.canvasHeight);
-  ctx.save(); ctx.translate(-camera.x, -camera.y);
-  for (const d of CONFIG.districts) { ctx.fillStyle = d.color; ctx.fillRect(d.x, d.y, d.w, d.h); }
-  ctx.fillStyle = "#f7c873";
-  ctx.fillRect(0, 0, CONFIG.worldWidth, 26);
-  ctx.fillStyle = "#2ec4e6"; ctx.fillRect(0, 26, CONFIG.worldWidth, 14);
-  ctx.fillStyle = "#20242e";
-  for (const rx of world.roadsX) ctx.fillRect(rx - 32, 0, 64, CONFIG.worldHeight);
-  for (const ry of world.roadsY) ctx.fillRect(0, ry - 32, CONFIG.worldWidth, 64);
-  ctx.strokeStyle = "#ffe98a"; ctx.lineWidth = 3; ctx.setLineDash([18, 16]);
-  ctx.beginPath();
-  for (const rx of world.roadsX) { ctx.moveTo(rx, 0); ctx.lineTo(rx, CONFIG.worldHeight); }
-  for (const ry of world.roadsY) { ctx.moveTo(0, ry); ctx.lineTo(CONFIG.worldWidth, ry); }
-  ctx.stroke(); ctx.setLineDash([]);
-  for (const b of world.buildings) {
-    ctx.fillStyle = "#0c0e14"; ctx.fillRect(b.x + 5, b.y + 7, b.w, b.h);
-    ctx.fillStyle = b.color; ctx.fillRect(b.x, b.y, b.w, b.h);
-    ctx.strokeStyle = b.neon; ctx.lineWidth = 2; ctx.strokeRect(b.x + 2, b.y + 2, b.w - 4, b.h - 4);
-    ctx.fillStyle = "rgba(255,235,150,0.85)";
-    const cols = 4, rows = Math.max(2, Math.floor(b.floors / 2));
-    for (let i = 0; i < cols; i++) for (let j = 0; j < rows; j++) {
-      if ((i * 7 + j * 13 + b.floors) % 3 !== 0) ctx.fillRect(b.x + 14 + i * 28, b.y + 14 + j * 24, 12, 9);
+
+  // Push a circular entity out of buildings; returns corrected position.
+  resolveCollision(x, y, radius) {
+    let nx = Math.max(radius, Math.min(this.width - radius, x));
+    let ny = Math.max(radius, Math.min(this.height - radius, y));
+    const b = this.buildingAt(nx, ny, radius);
+    if (b) {
+      const left = Math.abs(nx + radius - b.x);
+      const right = Math.abs(b.x + b.w - (nx - radius));
+      const top = Math.abs(ny + radius - b.y);
+      const bottom = Math.abs(b.y + b.h - (ny - radius));
+      const smallest = Math.min(left, right, top, bottom);
+      if (smallest === left) nx = b.x - radius - 0.5;
+      else if (smallest === right) nx = b.x + b.w + radius + 0.5;
+      else if (smallest === top) ny = b.y - radius - 0.5;
+      else ny = b.y + b.h + radius + 0.5;
     }
+    return { x: nx, y: ny };
   }
-  for (const p of world.palms) {
-    ctx.strokeStyle = "#5d4037"; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x + 4, p.y - 16); ctx.stroke();
-    ctx.strokeStyle = "#2ecc71"; ctx.lineWidth = 3;
-    for (let k = 0; k < 5; k++) { const a = (k / 5) * Math.PI * 2; ctx.beginPath(); ctx.moveTo(p.x + 4, p.y - 16); ctx.lineTo(p.x + 4 + Math.cos(a) * 15, p.y - 16 + Math.sin(a) * 8 - 4); ctx.stroke(); }
+
+  randomRoadPoint(rng) {
+    const centers = roadCenters();
+    const vertical = rng.chance(0.5);
+    const lane = rng.pick(centers) + rng.range(-22, 22);
+    const along = rng.range(60, WORLD_WIDTH - 60);
+    return vertical ? { x: lane, y: along } : { x: along, y: lane };
   }
-  for (const l of world.lamps) {
-    const glow = ctx.createRadialGradient(l.x, l.y, 2, l.x, l.y, 42);
-    glow.addColorStop(0, "rgba(255,180,80,0.5)"); glow.addColorStop(1, "rgba(255,180,80,0)");
-    ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(l.x, l.y, 42, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = "#ffd54f"; ctx.beginPath(); ctx.arc(l.x, l.y, 4, 0, Math.PI * 2); ctx.fill();
+
+  randomSidewalkPoint(rng) {
+    for (let tries = 0; tries < 30; tries++) {
+      const x = rng.range(70, WORLD_WIDTH - 70);
+      const y = rng.range(70, WORLD_HEIGHT - 70);
+      if (!this.collides(x, y, 14) && !isOnRoad(x, y)) return { x, y };
+      if (!this.collides(x, y, 14)) return { x, y };
+    }
+    return { x: 480, y: 480 };
   }
-  ctx.restore();
+}
+
+export function createWorld(rng) {
+  return new World(rng);
 }

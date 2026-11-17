@@ -1,35 +1,58 @@
-// serve.ts — tiny static server so NEON BAY can be played locally.
-// Run: node serve.ts  →  http://localhost:8080
+// serve.ts - Tiny static server to play NEON BAY locally.
+// Run with: node serve.ts   then open http://localhost:8080
+// Uses only Node.js built-ins (written in TypeScript-flavoured plain JS
+// style so plain `node serve.ts` works on modern Node without a build step).
+
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const root = path.dirname(fileURLToPath(import.meta.url));
-const gameRoot = path.join(root, "game");
-const MIME: Record<string, string> = {
+const rootDir = path.dirname(fileURLToPath(import.meta.url));
+const gameDir = path.join(rootDir, "game");
+const port = Number(process.env.PORT || 8080);
+
+const mimeTypes = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
-  ".json": "application/json",
+  ".mjs": "text/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
   ".jpg": "image/jpeg",
   ".png": "image/png",
-  ".css": "text/css",
+  ".svg": "image/svg+xml",
 };
 
-const server = http.createServer((req, res) => {
-  const url = new URL(req.url || "/", "http://localhost:8080");
-  let rel = decodeURIComponent(url.pathname);
-  if (rel === "/") rel = "/index.html";
-  const file = path.join(gameRoot, rel);
-  if (!file.startsWith(gameRoot) || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
-    res.writeHead(404, { "content-type": "text/plain" });
-    res.end("not found");
-    return;
+const server = http.createServer((request, response) => {
+  try {
+    const url = new URL(request.url || "/", `http://localhost:${port}`);
+    let pathname = decodeURIComponent(url.pathname);
+    if (pathname === "/") pathname = "/index.html";
+    const filePath = path.join(gameDir, pathname);
+    if (!filePath.startsWith(gameDir)) {
+      response.writeHead(403, { "Content-Type": "text/plain" });
+      response.end("Forbidden");
+      return;
+    }
+    fs.readFile(filePath, (error, data) => {
+      if (error) {
+        response.writeHead(404, { "Content-Type": "text/plain" });
+        response.end("Not found: " + pathname);
+        return;
+      }
+      response.writeHead(200, {
+        "Content-Type": mimeTypes[path.extname(filePath)] || "application/octet-stream",
+        "Cache-Control": "no-store",
+      });
+      response.end(data);
+    });
+  } catch (error) {
+    response.writeHead(500, { "Content-Type": "text/plain" });
+    response.end(String(error));
   }
-  res.writeHead(200, { "content-type": MIME[path.extname(file)] || "application/octet-stream" });
-  fs.createReadStream(file).pipe(res);
 });
 
-server.listen(8080, () => {
-  console.log("NEON BAY running at http://localhost:8080");
+server.listen(port, () => {
+  console.log(`NEON BAY running at http://localhost:${port}`);
+  console.log("Controls: WASD move/drive, E enter car, F punch, Space shoot, P pause, M mute");
 });
