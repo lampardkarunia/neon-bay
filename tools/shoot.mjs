@@ -1,229 +1,131 @@
-// tools/shoot.mjs — memotret gim dengan Chrome headless (Node 22, bawaan saja).
-//
-// Menyajikan root repo di port lokal, mengendalikan chrome-headless-shell bawaan lewat
-// WebSocket DevTools-nya, dan untuk tiap shot di shots.json memuat
-// game/index.html?<query>, menunggu window.__shotReady, menolak shot bila ada error
-// konsol fatal / exception tak tertangkap / canvas kosong, lalu menyimpan JPEG
-// 1280x720 (kualitas ~0.85) ke screenshots/<name>. Juga memuat gim tanpa query
-// sebagai pemeriksaan asap bahwa gim bisa boot di luar mode shot.
-// Pakai: node tools/shoot.mjs   (dari root repo; keluar non-nol bila ada kegagalan)
+// shoot.mjs — smoke test + deterministic screenshots via headless Chrome CDP
+// Node built-ins only. Serves the repo, loads the game, counts canvas colours,
+// captures each shots.json scene and enforces the 256 KiB JPEG limit.
+import http from "node:http";
+import fs from "node:fs";
+import path from "node:path";
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
-import { spawn } from 'node:child_process';
-import { createServer } from 'node:http';
-import { createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { extname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
-const HTTP_PORT = 8129;
-const DEBUG_PORT = 9339;
-const CHROME = '/home/hatch/.cache/puppeteer/chrome-headless-shell/linux-157.0.8103.50/chrome-headless-shell-linux64/chrome-headless-shell';
-const SHOTS = JSON.parse(readFileSync(join(ROOT, 'shots.json'), 'utf8'));
-const SHOT_DIR = join(ROOT, 'screenshots');
-const MAX_BYTES = 262144;
-
-const MIME = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.mjs': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.svg': 'image/svg+xml',
-  '.ico': 'image/x-icon',
-};
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const CHROME = "/home/hatch/.cache/puppeteer/chrome-headless-shell/linux-157.0.8103.50/chrome-headless-shell-linux64/chrome-headless-shell";
+const PORT = 8931;
+const MIME = { ".html": "text/html", ".js": "text/javascript", ".json": "application/json", ".jpg": "image/jpeg", ".css": "text/css" };
 
 function serve() {
-  return new Promise((resolvePromise, reject) => {
-    const server = createServer((req, res) => {
-      try {
-        const url = new URL(req.url, 'http://127.0.0.1');
-        let rel = decodeURIComponent(url.pathname).replace(/^\/+/, '');
-        if (rel === '') rel = 'game/index.html';
-        const file = resolve(ROOT, rel);
-        if (!file.startsWith(ROOT + '/') || !existsSync(file) || !statSync(file).isFile()) {
-          res.writeHead(404, { 'content-type': 'text/plain' });
-          res.end('not found');
-          return;
-        }
-        res.writeHead(200, { 'content-type': MIME[extname(file)] ?? 'application/octet-stream' });
-        createReadStream(file).pipe(res);
-      } catch {
-        res.writeHead(500, { 'content-type': 'text/plain' });
-        res.end('server error');
-      }
+  return new Promise((resolve) => {
+    const server = http.createServer((req, res) => {
+      const urlPath = decodeURIComponent(new URL(req.url, "http://x").pathname);
+      const file = path.join(root, urlPath === "/" ? "game/index.html" : urlPath);
+      if (!file.startsWith(root) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.writeHead(404); res.end("nf"); return; }
+      res.writeHead(200, { "content-type": MIME[path.extname(file)] || "application/octet-stream" });
+      fs.createReadStream(file).pipe(res);
     });
-    server.once('error', reject);
-    server.listen(HTTP_PORT, '127.0.0.1', () => resolvePromise(server));
+    server.listen(PORT, "127.0.0.1", () => resolve(server));
   });
 }
-
-async function httpJson(url, { method = 'GET' } = {}) {
-  const res = await fetch(url, { method });
-  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
-  return res.json();
+async function waitJson(url, tries = 60) {
+  for (let i = 0; i < tries; i++) {
+    try { const r = await fetch(url); if (r.ok) return await r.json(); } catch { /* retry */ }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  throw new Error("chrome devtools did not come up: " + url);
 }
-
-async function waitFor(fn, timeoutMs, label) {
-  const start = Date.now();
-  for (;;) {
-    const value = await fn().catch(() => null);
-    if (value) return value;
-    if (Date.now() - start > timeoutMs) throw new Error(`timeout waiting for ${label}`);
+function connectCdp(wsUrl) {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(wsUrl);
+    let id = 0; const pending = new Map(); const listeners = [];
+    ws.onmessage = (ev) => {
+      const msg = JSON.parse(ev.data);
+      if (msg.id && pending.has(msg.id)) { const p = pending.get(msg.id); pending.delete(msg.id); msg.error ? p.reject(new Error(JSON.stringify(msg.error))) : p.resolve(msg.result); }
+      else if (msg.method) listeners.forEach((fn) => fn(msg));
+    };
+    ws.onerror = reject;
+    ws.onopen = () => resolve({
+      send(method, params = {}) { const mid = ++id; ws.send(JSON.stringify({ id: mid, method, params })); return new Promise((res2, rej2) => pending.set(mid, { resolve: res2, reject: rej2 })); },
+      on(fn) { listeners.push(fn); },
+      close() { ws.close(); },
+    });
+  });
+}
+async function evaluate(cdp, expression) {
+  const r = await cdp.send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
+  if (r.exceptionDetails) throw new Error("page exception: " + JSON.stringify(r.exceptionDetails).slice(0, 500));
+  return r.result ? r.result.value : undefined;
+}
+async function loadAndCheck(cdp, errors, url, waitShot) {
+  errors.length = 0;
+  await cdp.send("Page.navigate", { url });
+  const deadline = Date.now() + 20000;
+  while (Date.now() < deadline) {
+    const ready = await evaluate(cdp, "document.readyState").catch(() => "");
+    if (ready === "complete" || ready === "interactive") break;
     await new Promise((r) => setTimeout(r, 200));
   }
-}
-
-// Klien CDP minimal di atas WebSocket global milik Node.
-class Cdp {
-  constructor(wsUrl) {
-    this.ws = new WebSocket(wsUrl);
-    this.nextId = 1;
-    this.pending = new Map();
-    this.events = [];
-    this.ws.onmessage = (ev) => {
-      const msg = JSON.parse(ev.data);
-      if (msg.id && this.pending.has(msg.id)) {
-        const { resolve: res, reject: rej } = this.pending.get(msg.id);
-        this.pending.delete(msg.id);
-        if (msg.error) rej(new Error(`CDP ${msg.error.code}: ${msg.error.message}`));
-        else res(msg.result);
-      } else if (msg.method) {
-        this.events.push(msg);
-      }
-    };
-    this.open = new Promise((res, rej) => {
-      this.ws.onopen = res;
-      this.ws.onerror = () => rej(new Error('WebSocket failed to open'));
-    });
-  }
-
-  async call(method, params = {}) {
-    await this.open;
-    const id = this.nextId++;
-    return new Promise((resolvePromise, reject) => {
-      this.pending.set(id, { resolve: resolvePromise, reject });
-      this.ws.send(JSON.stringify({ id, method, params }));
-    });
-  }
-
-  async evaluate(expression) {
-    const r = await this.call('Runtime.evaluate', { expression, returnByValue: true });
-    if (r.exceptionDetails) throw new Error(`page exception: ${r.exceptionDetails.text} ${r.exceptionDetails.exception?.description ?? ''}`);
-    return r.result?.value;
-  }
-
-  fatalEvents() {
-    return this.events.filter((e) => {
-      if (e.method === 'Runtime.exceptionThrown') return true;
-      if (e.method === 'Runtime.consoleAPICalled' && e.params.type === 'error') return true;
-      return false;
-    });
-  }
-}
-
-async function main() {
-  mkdirSync(SHOT_DIR, { recursive: true });
-  const server = await serve();
-  console.log(`serving ${ROOT} on http://127.0.0.1:${HTTP_PORT}`);
-
-  const profile = `/tmp/neon-bay-shoot-profile-${process.pid}`;
-  const chrome = spawn(CHROME, [
-    '--headless',
-    '--no-sandbox',
-    '--disable-gpu',
-    '--disable-dev-shm-usage',
-    '--no-first-run',
-    '--hide-scrollbars',
-    `--remote-debugging-port=${DEBUG_PORT}`,
-    `--user-data-dir=${profile}`,
-    '--window-size=1280,720',
-    'about:blank',
-  ], { stdio: 'ignore' });
-
-  const failures = [];
-  try {
-    const targets = await waitFor(
-      async () => {
-        const list = await httpJson(`http://127.0.0.1:${DEBUG_PORT}/json/list`);
-        const page = list.find((t) => t.type === 'page');
-        return page ?? null;
-      },
-      30000,
-      'chrome DevTools page target',
-    );
-    const cdp = new Cdp(targets.webSocketDebuggerUrl);
-    await cdp.call('Page.enable');
-    await cdp.call('Runtime.enable');
-    await cdp.call('Emulation.setDeviceMetricsOverride', { width: 1280, height: 720, deviceScaleFactor: 1, mobile: false });
-
-    async function loadAndCheck(url, { waitReady }) {
-      await cdp.call('Page.navigate', { url });
-      if (waitReady) {
-        await waitFor(async () => (await cdp.evaluate('window.__shotReady === true')) || null, 20000, '__shotReady');
-      } else {
-        await new Promise((r) => setTimeout(r, 2500));
-      }
-      const colours = await cdp.evaluate(`(() => {
-        const c = document.querySelector('canvas');
-        if (!c) return -1;
-        const t = document.createElement('canvas');
-        t.width = 160; t.height = 90;
-        const x = t.getContext('2d');
-        x.drawImage(c, 0, 0, 160, 90);
-        const d = x.getImageData(0, 0, 160, 90).data;
-        const seen = new Set();
-        for (let i = 0; i < d.length; i += 4) seen.add((d[i] << 16) | (d[i + 1] << 8) | d[i + 2]);
-        return seen.size;
-      })()`);
-      return { colours, fatal: cdp.fatalEvents() };
+  if (waitShot) {
+    let ok = false;
+    while (Date.now() < deadline) {
+      ok = await evaluate(cdp, "window.__shotReady === true").catch(() => false);
+      if (ok) break;
+      await new Promise((r) => setTimeout(r, 200));
     }
-
-    const plain = await loadAndCheck(`http://127.0.0.1:${HTTP_PORT}/game/index.html`, { waitReady: false });
-    console.log(`plain load: canvas colours=${plain.colours} fatal=${plain.fatal.length}`);
-    if (plain.colours <= 40) failures.push(`plain load: canvas looks blank (colours=${plain.colours})`);
-    if (plain.fatal.length) failures.push(`plain load: fatal events ${JSON.stringify(plain.fatal).slice(0, 500)}`);
-
-    for (const shot of SHOTS) {
-      const url = `http://127.0.0.1:${HTTP_PORT}/game/index.html${shot.query}`;
-      const before = cdp.events.length;
-      const { colours } = await loadAndCheck(url, { waitReady: true });
-      const fatal = cdp.fatalEvents().slice(before);
-      console.log(`${shot.name}: colours=${colours} fatal=${fatal.length}`);
-      if (colours <= 40) {
-        failures.push(`${shot.name}: canvas looks blank (colours=${colours})`);
-        continue;
-      }
-      if (fatal.length) {
-        failures.push(`${shot.name}: fatal events ${JSON.stringify(fatal).slice(0, 500)}`);
-        continue;
-      }
-      const shot64 = await cdp.call('Page.captureScreenshot', {
-        format: 'jpeg',
-        quality: 85,
-        captureBeyondViewport: true,
-      });
-      const buf = Buffer.from(shot64.data, 'base64');
-      const dest = join(SHOT_DIR, shot.name);
-      writeFileSync(dest, buf);
-      console.log(`${shot.name}: ${buf.length} bytes`);
-      if (buf.length > MAX_BYTES) failures.push(`${shot.name}: ${buf.length} bytes exceeds ${MAX_BYTES}`);
+    if (!ok) throw new Error("__shotReady timeout for " + url);
+  } else {
+    await new Promise((r) => setTimeout(r, 1800));
+  }
+  const fatal = errors.filter((e) => /error|exception/i.test(e));
+  if (fatal.length) throw new Error("console errors: " + fatal.join(" | ").slice(0, 600));
+  const colours = await evaluate(cdp, `(() => {
+    const c = document.getElementById('game'); if (!c) return -1;
+    const t = document.createElement('canvas'); t.width = 160; t.height = 90;
+    const x = t.getContext('2d'); x.drawImage(c, 0, 0, 160, 90);
+    const d = x.getImageData(0, 0, 160, 90).data; const s = new Set();
+    for (let i = 0; i < d.length; i += 16) s.add(d[i] + ',' + d[i+1] + ',' + d[i+2]);
+    return s.size;
+  })()`);
+  if (!(colours > 40)) throw new Error("canvas looks blank, unique colours=" + colours);
+  return colours;
+}
+async function main() {
+  const server = await serve();
+  const chrome = spawn(CHROME, ["--headless", "--disable-gpu", "--no-sandbox", `--remote-debugging-port=${PORT + 1}`, "--window-size=1280,720", "about:blank"], { stdio: "ignore" });
+  let cdp = null; const failures = [];
+  try {
+    const targets = await waitJson(`http://127.0.0.1:${PORT + 1}/json/list`);
+    const page = targets.find((t) => t.type === "page") || targets[0];
+    cdp = await connectCdp(page.webSocketDebuggerUrl);
+    const errors = [];
+    cdp.on((msg) => {
+      if (msg.method === "Runtime.consoleAPICalled" && msg.params.type === "error") errors.push(msg.params.args.map((a) => a.value || a.description || "").join(" "));
+      if (msg.method === "Runtime.exceptionThrown") errors.push("exception: " + JSON.stringify(msg.params.exceptionDetails).slice(0, 300));
+      if (msg.method === "Log.entryAdded" && msg.params.entry.level === "error") errors.push(msg.params.entry.text);
+    });
+    await cdp.send("Page.enable"); await cdp.send("Runtime.enable"); await cdp.send("Log.enable");
+    await cdp.send("Emulation.setDeviceMetricsOverride", { width: 1280, height: 720, deviceScaleFactor: 1, mobile: false });
+    // (a) plain load
+    try {
+      const colours = await loadAndCheck(cdp, errors, `http://127.0.0.1:${PORT}/game/index.html`, false);
+      console.log(`plain load: OK colours=${colours}`);
+    } catch (e) { failures.push("plain: " + e.message); console.log("plain load: FAIL " + e.message); }
+    // (b) shots
+    const shots = JSON.parse(fs.readFileSync(path.join(root, "shots.json"), "utf8"));
+    fs.mkdirSync(path.join(root, "screenshots"), { recursive: true });
+    for (const shot of shots) {
+      try {
+        const colours = await loadAndCheck(cdp, errors, `http://127.0.0.1:${PORT}/game/index.html${shot.query}`, true);
+        const shotRes = await cdp.send("Page.captureScreenshot", { format: "jpeg", quality: 85, captureBeyondViewport: false });
+        const buf = Buffer.from(shotRes.data, "base64");
+        if (buf.length > 262144) throw new Error(`screenshot too large: ${buf.length} bytes`);
+        fs.writeFileSync(path.join(root, "screenshots", shot.name), buf);
+        console.log(`${shot.name}: OK colours=${colours} bytes=${buf.length}`);
+      } catch (e) { failures.push(shot.name + ": " + e.message); console.log(`${shot.name}: FAIL ${e.message}`); }
     }
   } finally {
-    chrome.kill('SIGKILL');
+    if (cdp) cdp.close();
+    chrome.kill("SIGKILL");
     server.close();
   }
-
-  if (failures.length) {
-    for (const f of failures) console.error('FAIL:', f);
-    process.exit(1);
-  }
-  console.log('all shots OK');
+  if (failures.length) { console.error("FAILURES:\n" + failures.join("\n")); process.exit(1); }
+  console.log("all shots OK");
 }
-
-main().catch((err) => {
-  console.error('shoot failed:', err.message);
-  process.exit(1);
-});
+main().catch((e) => { console.error(e); process.exit(1); });

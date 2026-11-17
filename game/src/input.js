@@ -1,41 +1,31 @@
-// input.js — keadaan keyboard dan mouse untuk satu frame permainan.
-// `pressed` bersifat edge-triggered: terisi hanya pada frame tombol pertama kali ditekan.
+// input.js — keyboard state, edge-triggered presses
 export function createInput() {
-  const keys = new Set();
+  const down = new Set();
   const pressed = new Set();
-  let mouseX = 0, mouseY = 0, mouseDown = false, mouseClicked = false;
-
-  const input = {
-    keys, pressed, mouseX: 0, mouseY: 0,
-    get mouseDown() { return mouseDown; },
-    get mouseClicked() { return mouseClicked; },
-    axis() {
-      let x = 0, y = 0;
-      if (keys.has('KeyA') || keys.has('ArrowLeft')) x -= 1;
-      if (keys.has('KeyD') || keys.has('ArrowRight')) x += 1;
-      if (keys.has('KeyW') || keys.has('ArrowUp')) y -= 1;
-      if (keys.has('KeyS') || keys.has('ArrowDown')) y += 1;
-      return { x, y };
+  const codeMap = (e) => e.code;
+  window.addEventListener("keydown", (e) => {
+    const c = codeMap(e);
+    if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space"].includes(c)) e.preventDefault();
+    if (!down.has(c)) pressed.add(c);
+    down.add(c);
+  });
+  window.addEventListener("keyup", (e) => down.delete(codeMap(e)));
+  window.addEventListener("blur", () => { down.clear(); });
+  return {
+    isDown(...codes) { return codes.some((c) => down.has(c)); },
+    wasPressed(...codes) { return codes.some((c) => pressed.has(c)); },
+    axisX() {
+      let x = 0;
+      if (this.isDown("KeyA", "ArrowLeft")) x -= 1;
+      if (this.isDown("KeyD", "ArrowRight")) x += 1;
+      return x;
     },
-    wasPressed(code) { return pressed.has(code); },
-    consume(code) { pressed.delete(code); },
-    attach(canvas) {
-      window.addEventListener('keydown', (e) => {
-        if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
-        if (!keys.has(e.code)) pressed.add(e.code);
-        keys.add(e.code);
-      });
-      window.addEventListener('keyup', (e) => keys.delete(e.code));
-      window.addEventListener('blur', () => keys.clear());
-      canvas.addEventListener('mousemove', (e) => {
-        const r = canvas.getBoundingClientRect();
-        mouseX = e.clientX - r.left; mouseY = e.clientY - r.top;
-        input.mouseX = mouseX; input.mouseY = mouseY;
-      });
-      canvas.addEventListener('mousedown', (e) => { mouseDown = true; mouseClicked = true; });
-      window.addEventListener('mouseup', () => { mouseDown = false; });
+    axisY() {
+      let y = 0;
+      if (this.isDown("KeyW", "ArrowUp")) y -= 1;
+      if (this.isDown("KeyS", "ArrowDown")) y += 1;
+      return y;
     },
-    endFrame() { pressed.clear(); mouseClicked = false; },
+    endFrame() { pressed.clear(); },
   };
-  return input;
 }

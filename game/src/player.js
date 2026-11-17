@@ -1,168 +1,54 @@
-// player.js — tokoh utama Jax Marlowe dan semua yang melekat padanya:
-// gerak jalan kaki, mengemudi dengan sedikit drift, masuk/keluar serta mencuri mobil,
-// kesehatan, uang, dan meter wanted yang meluruh saat ia lepas dari pantauan.
-import { CFG } from './config.js';
-import { clamp, angleDiff } from './random.js';
-import { collidesBuilding, inWater, isOnRoad } from './world.js';
+// player.js — Jax Marlowe: on-foot movement, health, driving link
+import { CONFIG, clamp } from "./config.js";
 
-export function createPlayer(x, y) {
+export function createPlayer(start) {
   return {
-    x, y, angle: -Math.PI / 2, speed: 0,
-    onFoot: true, car: null,
-    health: 100, money: 0,
-    wanted: 0, wantedTimer: 0, hiddenTimer: 0,
-    aimAngle: -Math.PI / 2,
-    punchCooldown: 0, shootCooldown: 0,
-    hurtFlash: 0, carHealth: 100,
-    moving: false,
+    name: "Jax Marlowe",
+    x: start.x, y: start.y, vx: 0, vy: 0,
+    angle: 0, radius: CONFIG.playerRadius,
+    health: CONFIG.playerMaxHealth, maxHealth: CONFIG.playerMaxHealth,
+    money: CONFIG.moneyStart, vehicle: null, alive: true,
+    walkPhase: 0, hurtTimer: 0,
   };
 }
-
-export function addWanted(player, n, reason) {
-  const before = player.wanted;
-  player.wanted = clamp(player.wanted + n, 0, CFG.MAX_WANTED);
-  player.wantedTimer = 0;
-  player.hiddenTimer = 0;
-  return { before, after: player.wanted, reason };
+export function updatePlayerOnFoot(player, input, world, dt) {
+  if (player.vehicle || !player.alive) return;
+  const ax = input.axisX(), ay = input.axisY();
+  const len = Math.hypot(ax, ay) || 1;
+  const speed = CONFIG.playerSpeed;
+  const nx = player.x + (ax / len) * speed * dt * (ax || ay ? 1 : 0);
+  const ny = player.y + (ay / len) * speed * dt * (ax || ay ? 1 : 0);
+  if (ax || ay) { player.angle = Math.atan2(ay, ax); player.walkPhase += dt * 10; }
+  const probeX = { x: nx, y: player.y };
+  if (!world.collidesBuilding(probeX, player.radius)) player.x = nx;
+  const probeY = { x: player.x, y: ny };
+  if (!world.collidesBuilding(probeY, player.radius)) player.y = ny;
+  world.clampToWorld(player, player.radius);
+  if (player.hurtTimer > 0) player.hurtTimer -= dt;
 }
-
-export function updatePlayer(state, input, dt) {
-  const p = state.player;
-  p.punchCooldown = Math.max(0, p.punchCooldown - dt);
-  p.shootCooldown = Math.max(0, p.shootCooldown - dt);
-  p.hurtFlash = Math.max(0, p.hurtFlash - dt * 2);
-
-  if (p.onFoot) updateOnFoot(state, input, dt);
-  else updateDriving(state, input, dt);
-
-  // Bintang wanted hanya turun bila tidak ada unit polisi (atau heli) yang cukup dekat.
-  if (p.wanted > 0) {
-    const near = state.police.some((c) => Math.hypot(c.x - p.x, c.y - p.y) < 520)
-      || (state.heli && Math.hypot(state.heli.x - p.x, state.heli.y - p.y) < 700);
-    if (!near) {
-      p.hiddenTimer += dt;
-      if (p.hiddenTimer > CFG.WANTED_DECAY_SECONDS) {
-        p.hiddenTimer = 0;
-        p.wanted = Math.max(0, p.wanted - 1);
-      }
-    } else {
-      p.hiddenTimer = 0;
-    }
-  }
-  if (p.health <= 0 && state.mode === 'play') {
-    state.mode = 'busted';
-  }
+export function damagePlayer(player, amount) {
+  if (!player.alive) return;
+  player.health = clamp(player.health - amount, 0, player.maxHealth);
+  player.hurtTimer = 0.35;
+  if (player.health <= 0) player.alive = false;
 }
-
-function updateOnFoot(state, input, dt) {
-  const p = state.player;
-  const a = input.axis();
-  const len = Math.hypot(a.x, a.y) || 1;
-  const running = input.keys.has('ShiftLeft') || input.keys.has('ShiftRight');
-  const spd = running ? CFG.PLAYER_RUN_SPEED : CFG.PLAYER_WALK_SPEED;
-  p.moving = (a.x !== 0 || a.y !== 0);
-  if (p.moving) {
-    const nx = p.x + (a.x / len) * spd * dt;
-    const ny = p.y + (a.y / len) * spd * dt;
-    if (!collidesBuilding(state.world, nx, p.y, 12) && !inWater(state.world, nx, p.y)) p.x = nx;
-    if (!collidesBuilding(state.world, p.x, ny, 12) && !inWater(state.world, p.x, ny)) p.y = ny;
-    p.angle = Math.atan2(a.y, a.x);
-  }
-  // Bidik mengikuti kursor mouse setelah diterjemahkan ke koordinat dunia.
-  const wx = state.camera.x + input.mouseX;
-  const wy = state.camera.y + input.mouseY;
-  p.aimAngle = Math.atan2(wy - p.y, wx - p.x);
-  p.x = clamp(p.x, 24, CFG.WORLD_W - 24);
-  p.y = clamp(p.y, 24, CFG.WORLD_H - 24);
+export function healPlayer(player, amount) {
+  player.health = clamp(player.health + amount, 0, player.maxHealth);
+  if (player.health > 0) player.alive = true;
 }
-
-function updateDriving(state, input, dt) {
-  const p = state.player;
-  const car = p.car;
-  if (!car) { p.onFoot = true; return; }
-  const a = input.axis();
-  const forward = a.y < 0 ? 1 : a.y > 0 ? -1 : 0;
-  const steer = a.x;
-  if (forward > 0) car.speed += CFG.CAR_ACCEL * dt;
-  else if (forward < 0) car.speed -= (car.speed > 0 ? CFG.CAR_BRAKE : CFG.CAR_ACCEL * 0.6) * dt;
-  else car.speed -= car.speed * CFG.CAR_DRAG * dt;
-  car.speed = clamp(car.speed, -CFG.CAR_REVERSE_MAX, CFG.CAR_MAX_SPEED);
-  if (Math.abs(car.speed) < 4 && forward === 0) car.speed = 0;
-
-  // Kemudi terasa lebih berat di kecepatan rendah; di kecepatan tinggi muncul selip.
-  const steerAmt = steer * CFG.CAR_STEER * dt * clamp(Math.abs(car.speed) / 120, 0, 1) * (car.speed >= 0 ? 1 : -1);
-  car.angle += steerAmt;
-  const drift = Math.abs(car.speed) > 260 && Math.abs(steer) > 0.4 ? 0.12 : 0.02;
-  const vx = Math.cos(car.angle) * car.speed;
-  const vy = Math.sin(car.angle) * car.speed;
-  car.vx = (car.vx || 0) * (1 - drift) + vx * drift;
-  car.vy = (car.vy || 0) * (1 - drift) + vy * drift;
-  let nx = car.x + car.vx * dt;
-  let ny = car.y + car.vy * dt;
-  const hit = collidesBuilding(state.world, nx, ny, 20);
-  if (hit) {
-    car.speed *= -0.25;
-    car.vx *= -0.3; car.vy *= -0.3;
-    nx = car.x; ny = car.y;
-    if (Math.abs(car.speed) > 120) {
-      p.carHealth -= 6;
-      state.audioCrash = true;
-    }
-  }
-  if (inWater(state.world, nx, ny)) { nx = car.x; ny = car.y; car.speed *= 0.5; }
-  car.x = clamp(nx, 30, CFG.WORLD_W - 30);
-  car.y = clamp(ny, 30, CFG.WORLD_H - 30);
-  p.x = car.x; p.y = car.y; p.angle = car.angle; p.speed = car.speed;
-  p.moving = Math.abs(car.speed) > 10;
-  if (p.carHealth <= 0) {
-    car.disabled = true;
-    exitCar(state);
-    p.carHealth = 100;
-  }
+export function playerPosition(player) {
+  if (player.vehicle) return { x: player.vehicle.x, y: player.vehicle.y };
+  return { x: player.x, y: player.y };
 }
-
-// Tombol E: masuk ke mobil terdekat, atau keluar dari mobil yang sedang dipakai.
-// Mengambil mobil traffic yang sedang berjalan dihitung sebagai pencurian.
-export function tryEnterExitCar(state) {
-  const p = state.player;
-  if (!p.onFoot) { exitCar(state); return 'exit'; }
-  let best = null, bestD = 92;
-  for (const c of state.traffic) {
-    if (c.disabled) continue;
-    const d = Math.hypot(c.x - p.x, c.y - p.y);
-    if (d < bestD) { bestD = d; best = c; }
-  }
-  if (!best) return null;
-  const stolen = !best.parked;
-  state.traffic = state.traffic.filter((c) => c !== best);
-  best.parked = false; best.disabled = false;
-  p.car = best; p.onFoot = false; p.carHealth = 100;
-  p.angle = best.angle;
-  if (stolen) {
-    addWanted(p, 1, 'curi mobil');
-    state.toast = 'Mobil dicuri! Wanted +1';
-  } else {
-    state.toast = 'Masuk mobil';
-  }
-  return stolen ? 'steal' : 'enter';
-}
-
-export function exitCar(state) {
-  const p = state.player;
-  if (!p.car) return;
-  const car = p.car;
-  car.parked = true;
-  car.speed = 0; car.vx = 0; car.vy = 0;
-  car.x += Math.cos(car.angle + Math.PI / 2) * 26;
-  car.y += Math.sin(car.angle + Math.PI / 2) * 26;
-  state.traffic.push(car);
-  p.car = null; p.onFoot = true;
-  p.x = car.x + Math.cos(car.angle + Math.PI / 2) * 30;
-  p.y = car.y + Math.sin(car.angle + Math.PI / 2) * 30;
-}
-
-export function hurtPlayer(state, dmg) {
-  const p = state.player;
-  p.health = Math.max(0, p.health - dmg);
-  p.hurtFlash = 1;
+export function drawPlayer(ctx, player) {
+  if (player.vehicle) return;
+  ctx.save(); ctx.translate(player.x, player.y); ctx.rotate(player.angle);
+  ctx.fillStyle = "rgba(0,0,0,0.35)"; ctx.beginPath(); ctx.ellipse(0, 5, 14, 7, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = player.hurtTimer > 0 ? "#ff5252" : "#ff2e88";
+  ctx.beginPath(); ctx.arc(0, 0, player.radius, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#ffd9a0"; ctx.beginPath(); ctx.arc(3, 0, 7, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#111"; ctx.fillRect(8, -3, 9, 6);
+  ctx.restore();
+  ctx.fillStyle = "#fff"; ctx.font = "bold 11px sans-serif"; ctx.textAlign = "center";
+  ctx.fillText("JAX", player.x, player.y - 22);
 }

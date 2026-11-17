@@ -1,55 +1,32 @@
-// config.js — konstanta pusat untuk NEON BAY, varian HEAT.
-// Seluruh angka tuning tinggal di sini supaya modul lain tetap ringkas.
-// Kota dan tokohnya orisinal; tidak ada aset luar dan tidak ada jaringan.
-export const CFG = {
-  VIEW_W: 1280,
-  VIEW_H: 720,
-  WORLD_W: 3600,
-  WORLD_H: 2600,
-  ROAD_W: 96,
-  ROAD_STEP: 400,
-  ROAD_FIRST: 200,
-  PLAYER_WALK_SPEED: 210,
-  PLAYER_RUN_SPEED: 300,
-  CAR_ACCEL: 340,
-  CAR_MAX_SPEED: 430,
-  CAR_REVERSE_MAX: 150,
-  CAR_BRAKE: 520,
-  CAR_DRAG: 0.55,
-  CAR_STEER: 2.6,
-  TRAFFIC_COUNT: 46,
-  PED_COUNT: 60,
-  MAX_WANTED: 5,
-  WANTED_DECAY_SECONDS: 9,
-  BULLET_SPEED: 760,
-  BULLET_RANGE: 520,
-  BULLET_DAMAGE: 34,
-  PUNCH_DAMAGE: 25,
-  PUNCH_RANGE: 46,
-  SAVE_KEY: 'neon-bay-heat-save-v1',
+// config.js — central tuning constants for NEON BAY (HEAT variant)
+export const CONFIG = {
+  canvasWidth: 1280,
+  canvasHeight: 720,
+  worldWidth: 3200,
+  worldHeight: 2400,
+  tileRoad: 200,
+  playerSpeed: 170,
+  playerRadius: 13,
+  playerMaxHealth: 100,
+  interactRange: 52,
+  wantedDecaySeconds: 14,
+  wantedPerCrime: { steal: 1, hitPed: 1, hitCar: 0.5, shoot: 1, punch: 0.5 },
+  policePerStar: 2,
+  moneyStart: 120,
+  saveKey: "neon-bay-save-v1",
+  districts: [
+    { name: "Marina", x: 0, y: 0, w: 1600, h: 1200, color: "#123a4d" },
+    { name: "Downtown", x: 1600, y: 0, w: 1600, h: 1200, color: "#2b1d3d" },
+    { name: "Barrio", x: 0, y: 1200, w: 1600, h: 1200, color: "#3d2417" },
+    { name: "Portside", x: 1600, y: 1200, w: 1600, h: 1200, color: "#1c2f22" },
+  ],
+  vehicleTypes: {
+    sedan: { label: "Sedan", accel: 260, maxSpeed: 340, turn: 2.6, health: 100, w: 44, h: 22, colors: ["#c94f6d", "#4f7ec9", "#e0b341", "#7ac74f", "#eeeeee"] },
+    sport: { label: "Sport", accel: 420, maxSpeed: 520, turn: 3.4, health: 70, w: 46, h: 21, colors: ["#ff2e88", "#00e5ff", "#ffe600", "#ff6d00"] },
+    truck: { label: "Truck", accel: 170, maxSpeed: 240, turn: 1.7, health: 180, w: 58, h: 28, colors: ["#8d6e63", "#607d8b", "#a1887f", "#90a4ae"] },
+    police: { label: "Police", accel: 380, maxSpeed: 480, turn: 3.1, health: 130, w: 46, h: 22, colors: ["#111318"] },
+  },
 };
-
-export const DISTRICTS = {
-  MARINA: { name: 'Marina', color: '#1d4e5f', building: '#2b6a7d', accent: '#39c2d7' },
-  DOWNTOWN: { name: 'Downtown', color: '#232338', building: '#3a3a55', accent: '#ff2e88' },
-  BARRIO: { name: 'Barrio', color: '#3a2b1e', building: '#6b4a2f', accent: '#ffb347' },
-  PORT: { name: 'Portside', color: '#1e2a24', building: '#33503f', accent: '#7dffb0' },
-};
-
-export const CAR_COLORS = [
-  '#e63946', '#f4a261', '#2a9d8f', '#e9c46a', '#457b9d',
-  '#9b5de5', '#f15bb5', '#00bbf9', '#c0c0c8', '#222831',
-  '#ff6b35', '#06d6a0', '#ffd166', '#ef476f',
-];
-
-export const MISSION_REWARDS = { m1: 300, m2: 600, m3: 1000 };
-
-// Palet neon yang dipakai HUD dan penanda di layar.
-export const NEON = {
-  pink: '#ff2e88',
-  cyan: '#22d3ee',
-  yellow: '#ffd166',
-  green: '#4ade80',
-  red: '#ef4444',
-  white: '#f8fafc',
-};
+export function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
+export function dist(a, b) { const dx = a.x - b.x, dy = a.y - b.y; return Math.hypot(dx, dy); }
+export function angleTo(a, b) { return Math.atan2(b.y - a.y, b.x - a.x); }

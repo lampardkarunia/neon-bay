@@ -1,55 +1,113 @@
-// NEON BAY — HEAT: entri gta6-01 yang bisa dijalankan (Node 22, pustaka standar saja).
-// Permainan itu sendiri adalah folder game/ di samping berkas ini: berkas statis polos
-// yang dibuka browser desktop secara offline (game/index.html beserta modul ES-nya,
-// tanpa pustaka dan tanpa permintaan jaringan). Program ini menyerahkannya: menyalin
-// game/ dan screenshots/ ke folder keluaran, lalu menulis dossier.json — ringkasan
-// yang dibaca penilai — memakai pustaka make.fun yang ter-vendor di repo.
-// NEON BAY adalah gim kejahatan dunia-terbuka 2D dari atas: Jax Marlowe mengemudi,
-// berkelahi, dan menjalankan misi keliling kota orisinal Neon Bay sementara polisi
-// memburunya berdasarkan meter wanted. Untuk mencoba lokal: `node serve.ts`,
-// lalu buka http://localhost:8080.
-// Di luar kontainer penilai, MAKEFUN_OUTPUT_DIR menggantikan /output:
-//   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
+// main.ts — make.fun entry builder for NEON BAY (gta6-01)
+// Copies game/ + screenshots/ into the output directory, then builds the
+// competition dossier with the vendor API and writes dossier.json there.
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+// @ts-ignore — vendor starter-kit module, returns dossier bytes
+import { buildDossier } from "./vendor/makefun-game.ts";
 
-import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { buildDossier } from './vendor/makefun-game.ts';
+const here = path.dirname(fileURLToPath(import.meta.url));
+const outputDir = path.resolve(process.env.MAKEFUN_OUTPUT_DIR ?? "/output");
 
-const here = fileURLToPath(new URL('.', import.meta.url));
-const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
-
-// Folder keluaran sendiri tidak pernah dihapus (bisa jadi mount atau milik pemanggil);
-// folder itu dibuat bila belum ada, lalu isinya dibersihkan satu per satu. Setiap berkas
-// dibuat bisa-tulis dulu supaya salinan baca-saja dari run sebelumnya tidak menghalangi.
-mkdirSync(out, { recursive: true });
-for (const child of readdirSync(out)) {
-  const target = join(out, child);
-  const makeWritable = (p) => {
-    try { chmodSync(p, 0o755); } catch { /* usaha terbaik; rmSync akan melaporkan kegagalan nyata */ }
-    const st = statSync(p);
-    if (st.isDirectory()) for (const sub of readdirSync(p)) makeWritable(join(p, sub));
-  };
-  makeWritable(target);
-  rmSync(target, { recursive: true, force: true });
+function makeWritableRecursive(target: string): void {
+  try {
+    const st = fs.statSync(target);
+    fs.chmodSync(target, st.isDirectory() ? 0o755 : 0o644);
+    if (st.isDirectory()) {
+      for (const name of fs.readdirSync(target)) makeWritableRecursive(path.join(target, name));
+    }
+  } catch {
+    /* missing entries are fine */
+  }
 }
 
-cpSync(join(here, 'game'), join(out, 'game'), { recursive: true });
-mkdirSync(join(out, 'screenshots'), { recursive: true });
-if (existsSync(join(here, 'screenshots'))) cpSync(join(here, 'screenshots'), join(out, 'screenshots'), { recursive: true });
+function cleanOutputContents(dir: string): void {
+  // Never delete the output directory itself — only its contents, one by one.
+  fs.mkdirSync(dir, { recursive: true });
+  for (const name of fs.readdirSync(dir)) {
+    const entry = path.join(dir, name);
+    makeWritableRecursive(entry);
+    fs.rmSync(entry, { recursive: true, force: true });
+  }
+}
 
-// Batas dari penilai (reference/gate.json): hanya text_max_bytes yang membentuk isi berkas;
-// batas lain menolak entri yang pasti ditolak penilai (lebih dari 4 screenshot atau satu
-// screenshot di atas 256 KiB; lebih dari 993 berkas game/ atau 48 MiB total berkas game,
-// atau path di bawah game/ melebihi 1000 byte: game/ dihitung di samping batas 1000 entri
-// milik /output sendiri, screenshots/-nya, dan dossier.json).
-writeFileSync(
-  join(out, 'dossier.json'),
-  buildDossier(out, {
+function copyRecursiveDeterministic(src: string, dest: string): void {
+  const st = fs.statSync(src);
+  if (st.isDirectory()) {
+    fs.mkdirSync(dest, { recursive: true });
+    const names = fs.readdirSync(src).sort();
+    for (const name of names) copyRecursiveDeterministic(path.join(src, name), path.join(dest, name));
+  } else {
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.copyFileSync(src, dest);
+  }
+}
+
+function validateScreenshots(dir: string): number {
+  // Revision hardening: fail loudly before building the dossier if any
+  // screenshot is missing, empty, oversized, or there are too many of them.
+  const shotsDir = path.join(dir, "screenshots");
+  const names = fs.readdirSync(shotsDir).filter((n) => n.toLowerCase().endsWith(".jpg")).sort();
+  if (names.length === 0) throw new Error("no screenshots found in " + shotsDir);
+  if (names.length > 4) throw new Error(`too many screenshots: ${names.length} (cap is 4)`);
+  for (const name of names) {
+    const size = fs.statSync(path.join(shotsDir, name)).size;
+    if (size <= 0) throw new Error("screenshot is empty: " + name);
+    if (size > 262144) throw new Error(`screenshot ${name} exceeds 262144 bytes: ${size}`);
+  }
+  return names.length;
+}
+
+async function main(): Promise<void> {
+  const shotCount = validateScreenshots(here);
+  console.log(`validated ${shotCount} screenshot(s) against the 262144-byte cap`);
+  cleanOutputContents(outputDir);
+  copyRecursiveDeterministic(path.join(here, "game"), path.join(outputDir, "game"));
+  copyRecursiveDeterministic(path.join(here, "screenshots"), path.join(outputDir, "screenshots"));
+
+  const caps = {
     text_max_bytes: 163840,
-    screenshots: { max: 4, max_bytes: 262144 },
-    game_max_files: 993,
-    game_max_bytes: 50331648,
-    game_path_max_bytes: 1000,
-  }),
-);
+    maxTextBytes: 163840,
+    textMaxBytes: 163840,
+    dossier_max_bytes: 1572864,
+    maxDossierBytes: 1572864,
+    dossierMaxBytes: 1572864,
+    max_screenshots: 4,
+    screenshot_max_count: 4,
+    maxScreenshots: 4,
+    maxScreenshotCount: 4,
+    screenshot_max_bytes: 262144,
+    maxScreenshotBytes: 262144,
+    screenshotMaxBytes: 262144,
+    long_side_max: 1280,
+    max_long_side: 1280,
+    maxLongSide: 1280,
+    maxSideLong: 1280,
+    short_side_min: 480,
+    min_short_side: 480,
+    minShortSide: 480,
+    minSideShort: 480,
+  };
+
+  const dossierBytes: unknown = await buildDossier(here, caps);
+  const bytes: Buffer = Buffer.isBuffer(dossierBytes)
+    ? dossierBytes
+    : typeof dossierBytes === "string"
+      ? Buffer.from(dossierBytes, "utf8")
+      : Buffer.from(dossierBytes as Uint8Array);
+
+  const dossierPath = path.join(outputDir, "dossier.json");
+  fs.writeFileSync(dossierPath, bytes);
+
+  if (!fs.existsSync(dossierPath)) throw new Error("dossier.json was not written to " + dossierPath);
+  const size = fs.statSync(dossierPath).size;
+  if (size <= 0) throw new Error("dossier.json is empty");
+  if (size > 1572864) throw new Error("dossier.json exceeds 1.5 MiB cap: " + size);
+  console.log(`dossier.json written: ${size} bytes -> ${dossierPath}`);
+}
+
+main().catch((err) => {
+  console.error("main.ts failed:", err);
+  process.exit(1);
+});

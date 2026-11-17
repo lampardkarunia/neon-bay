@@ -1,147 +1,91 @@
-// vehicles.js — lalu lintas dan pejalan kaki yang menghidupkan jalanan Neon Bay.
-// Mobil traffic melaju mengikuti arah jalannya dan berhenti bila jalurnya terhalang;
-// pejalan kaki berkeliaran pelan, lalu panik dan kabur saat ada bahaya di dekatnya.
-import { CFG, CAR_COLORS } from './config.js';
-import { randomRoadPoint, collidesBuilding } from './world.js';
-import { clamp } from './random.js';
+// vehicles.js — traffic cars, player driving, damage and explosions
+import { CONFIG, clamp } from "./config.js";
 
-export function makeCar(rng, x, y, angle, color) {
+let nextId = 1;
+export function createVehicle(type, x, y, angle, rng, isPolice = false) {
+  const spec = CONFIG.vehicleTypes[type];
   return {
-    x, y, angle, speed: 0, vx: 0, vy: 0,
-    color: color || rng.pick(CAR_COLORS),
-    w: 44, h: 22,
-    parked: false, disabled: false,
-    axis: null, road: 0, dir: 1, cruise: 90,
+    id: nextId++, type, spec, x, y, angle: angle || 0,
+    speed: 0, health: spec.health, maxHealth: spec.health,
+    color: isPolice ? "#101216" : rng.pick(spec.colors),
+    isPolice, driver: null, exploded: false, smoke: 0,
+    aiTimer: rng.range(0, 2), aiDir: rng.chance(0.5) ? 1 : -1, aiAxis: rng.chance(0.5) ? "x" : "y",
   };
 }
-
-export function spawnTraffic(state, count) {
-  const rng = state.rng;
+export function spawnTraffic(world, rng, count) {
   const cars = [];
+  const types = ["sedan", "sedan", "sport", "truck"];
   for (let i = 0; i < count; i++) {
-    const pt = randomRoadPoint(rng, state.world);
-    const angle = pt.axis === 'v' ? (rng.chance(0.5) ? Math.PI / 2 : -Math.PI / 2)
-      : (rng.chance(0.5) ? 0 : Math.PI);
-    const car = makeCar(rng, pt.x, pt.y, angle);
-    car.axis = pt.axis;
-    car.road = pt.axis === 'v' ? pt.x : pt.y;
-    car.dir = angle === 0 || angle === Math.PI / 2 ? 1 : -1;
-    car.cruise = rng.range(65, 115);
-    car.speed = car.cruise;
-    // Geser ke lajur yang sesuai dengan arah hadapnya.
-    const off = 22;
-    if (pt.axis === 'v') car.x += (angle === Math.PI / 2 ? -off : off);
-    else car.y += (angle === 0 ? off : -off);
-    cars.push(car);
+    const onXRoad = rng.chance(0.5);
+    const rx = rng.pick(world.roadsX), ry = rng.pick(world.roadsY);
+    const x = onXRoad ? rx : rng.range(120, CONFIG.worldWidth - 120);
+    const y = onXRoad ? rng.range(120, CONFIG.worldHeight - 120) : ry;
+    cars.push(createVehicle(rng.pick(types), x, y, onXRoad ? (rng.chance(0.5) ? 0 : Math.PI) : (rng.chance(0.5) ? Math.PI / 2 : -Math.PI / 2), rng));
   }
   return cars;
 }
-
-export function updateTraffic(state, dt) {
-  const p = state.player;
-  for (const c of state.traffic) {
-    if (c.disabled) continue;
-    if (c.parked) continue;
-    let target = c.cruise;
-    for (const o of state.traffic) {
-      if (o === c || o.parked || o.disabled) continue;
-      const dx = o.x - c.x, dy = o.y - c.y;
-      const ahead = dx * Math.cos(c.angle) + dy * Math.sin(c.angle);
-      const side = Math.abs(-dx * Math.sin(c.angle) + dy * Math.cos(c.angle));
-      if (ahead > 0 && ahead < 78 && side < 20) { target = 0; break; }
-    }
-    for (const ped of state.peds) {
-      const dx = ped.x - c.x, dy = ped.y - c.y;
-      const ahead = dx * Math.cos(c.angle) + dy * Math.sin(c.angle);
-      const side = Math.abs(-dx * Math.sin(c.angle) + dy * Math.cos(c.angle));
-      if (ahead > 0 && ahead < 60 && side < 18) { target = 0; break; }
-    }
-    c.speed += clamp(target - c.speed, -160 * dt, 120 * dt);
-    c.x += Math.cos(c.angle) * c.speed * dt;
-    c.y += Math.sin(c.angle) * c.speed * dt;
-    // Kadang belok di persimpangan terdekat supaya sebaran traffic tidak menumpuk.
-    if (state.rng.chance(0.0015) && c.speed > 20) {
-      const nr = nearestRoadCross(state, c);
-      if (nr) {
-        c.angle = nr.angle;
-        c.axis = nr.axis;
-      }
-    }
-    // Keluar di satu tepi, masuk lagi dari tepi berlawanan.
-    if (c.x < 60) { c.x = CFG.WORLD_W - 70; }
-    if (c.x > CFG.WORLD_W - 60) { c.x = 70; }
-    if (c.y < 60) { c.y = CFG.WORLD_H - 70; }
-    if (c.y > CFG.WORLD_H - 60) { c.y = 70; }
-    // Menabrak Jax yang sedang jalan kaki mendorongnya dan melukainya.
-    if (p.onFoot) {
-      const d = Math.hypot(c.x - p.x, c.y - p.y);
-      if (d < 26 && Math.abs(c.speed) > 40) {
-        p.health = Math.max(0, p.health - 12);
-        p.hurtFlash = 1;
-        p.x += (p.x - c.x) * 0.4; p.y += (p.y - c.y) * 0.4;
-      }
-    }
+export function updateVehicleDriving(vehicle, input, dt) {
+  if (vehicle.exploded) { vehicle.speed = 0; return; }
+  const fwd = input.isDown("KeyW", "ArrowUp") ? 1 : input.isDown("KeyS", "ArrowDown") ? -0.55 : 0;
+  vehicle.speed += fwd * vehicle.spec.accel * dt;
+  if (!fwd) vehicle.speed -= vehicle.speed * Math.min(1, dt * 1.6);
+  vehicle.speed = clamp(vehicle.speed, -vehicle.spec.maxSpeed * 0.5, vehicle.spec.maxSpeed);
+  if (Math.abs(vehicle.speed) > 4) {
+    const steer = (input.isDown("KeyA", "ArrowLeft") ? -1 : 0) + (input.isDown("KeyD", "ArrowRight") ? 1 : 0);
+    vehicle.angle += steer * vehicle.spec.turn * dt * Math.sign(vehicle.speed) * Math.min(1, Math.abs(vehicle.speed) / 120);
   }
-  // Isi ulang armada bila jumlah mobil aktif turun terlalu jauh.
-  if (state.traffic.filter((c) => !c.parked && !c.disabled).length < CFG.TRAFFIC_COUNT - 8) {
-    const pt = randomRoadPoint(state.rng, state.world);
-    const car = makeCar(state.rng, pt.x, pt.y, state.rng.chance(0.5) ? 0 : Math.PI / 2);
-    car.axis = pt.axis; car.cruise = state.rng.range(65, 115); car.speed = car.cruise;
-    state.traffic.push(car);
+  vehicle.x += Math.cos(vehicle.angle) * vehicle.speed * dt;
+  vehicle.y += Math.sin(vehicle.angle) * vehicle.speed * dt;
+}
+export function updateTrafficVehicle(vehicle, world, dt) {
+  if (vehicle.exploded || vehicle.driver === "player") return;
+  vehicle.aiTimer -= dt;
+  if (vehicle.aiTimer <= 0) {
+    vehicle.aiTimer = 1.6;
+    const road = world.nearestRoadPoint(vehicle);
+    vehicle.aiAxis = Math.abs(road.x - vehicle.x) < Math.abs(road.y - vehicle.y) ? "x" : "y";
+  }
+  const cruise = 95;
+  const targetAngle = vehicle.aiAxis === "x"
+    ? (Math.cos(vehicle.angle) >= 0 ? 0 : Math.PI)
+    : (Math.sin(vehicle.angle) >= 0 ? Math.PI / 2 : -Math.PI / 2);
+  let diff = targetAngle - vehicle.angle;
+  while (diff > Math.PI) diff -= Math.PI * 2;
+  while (diff < -Math.PI) diff += Math.PI * 2;
+  vehicle.angle += clamp(diff, -1.8 * dt, 1.8 * dt);
+  vehicle.speed += clamp(cruise - vehicle.speed, -120 * dt, 120 * dt);
+  const nx = vehicle.x + Math.cos(vehicle.angle) * vehicle.speed * dt;
+  const ny = vehicle.y + Math.sin(vehicle.angle) * vehicle.speed * dt;
+  if (!world.collidesBuilding({ x: nx, y: ny }, 20)) { vehicle.x = nx; vehicle.y = ny; }
+  else { vehicle.angle += Math.PI / 2; vehicle.speed = 30; }
+  world.clampToWorld(vehicle, 26);
+}
+export function damageVehicle(vehicle, amount, effects) {
+  if (vehicle.exploded) return;
+  vehicle.health -= amount;
+  vehicle.smoke = Math.max(vehicle.smoke, vehicle.health < 35 ? 1 : 0.3);
+  if (vehicle.health <= 0) {
+    vehicle.exploded = true; vehicle.speed = 0;
+    if (effects) effects.push({ x: vehicle.x, y: vehicle.y, r: 8, life: 0.7, maxLife: 0.7, kind: "explosion" });
   }
 }
-
-function nearestRoadCross(state, c) {
-  const w = state.world;
-  let best = null, bestD = 60;
-  for (const rx of w.xs) for (const ry of w.ys) {
-    const d = Math.hypot(c.x - rx, c.y - ry);
-    if (d < bestD) {
-      bestD = d;
-      best = state.rng.chance(0.5)
-        ? { axis: 'v', angle: state.rng.chance(0.5) ? Math.PI / 2 : -Math.PI / 2 }
-        : { axis: 'h', angle: state.rng.chance(0.5) ? 0 : Math.PI };
-    }
+export function drawVehicle(ctx, vehicle) {
+  ctx.save(); ctx.translate(vehicle.x, vehicle.y); ctx.rotate(vehicle.angle);
+  const { w, h } = vehicle.spec;
+  ctx.fillStyle = "rgba(0,0,0,0.4)"; ctx.fillRect(-w / 2 + 3, -h / 2 + 5, w, h);
+  ctx.fillStyle = vehicle.exploded ? "#222" : vehicle.color;
+  ctx.beginPath(); ctx.roundRect(-w / 2, -h / 2, w, h, 6); ctx.fill();
+  ctx.fillStyle = vehicle.exploded ? "#111" : "#bfefff";
+  ctx.fillRect(-6, -h / 2 + 3, 16, h - 6);
+  ctx.fillStyle = "#111";
+  for (const [wx, wy] of [[-w / 2 + 7, -h / 2 - 2], [w / 2 - 7, -h / 2 - 2], [-w / 2 + 7, h / 2 - 2], [w / 2 - 7, h / 2 - 2]]) ctx.fillRect(wx - 4, wy, 8, 4);
+  if (vehicle.isPolice) {
+    ctx.fillStyle = "#fff"; ctx.fillRect(-w / 2, -5, w, 10);
+    ctx.fillStyle = "#d32f2f"; ctx.fillRect(-4, -h / 2, 8, 5);
+    ctx.fillStyle = "#1565c0"; ctx.fillRect(-4, h / 2 - 5, 8, 5);
+    ctx.fillStyle = "#111"; ctx.font = "bold 8px sans-serif"; ctx.textAlign = "center"; ctx.fillText("POLICE", 0, 3);
   }
-  return best;
-}
-
-export function spawnPeds(state, count) {
-  const peds = [];
-  for (let i = 0; i < count; i++) {
-    const pt = randomRoadPoint(state.rng, state.world);
-    peds.push({
-      x: pt.x + state.rng.range(-60, 60),
-      y: pt.y + state.rng.range(-60, 60),
-      angle: state.rng.range(0, Math.PI * 2),
-      speed: state.rng.range(28, 55),
-      color: state.rng.pick(['#f8fafc', '#fbbf24', '#34d399', '#f472b6', '#93c5fd', '#fb923c']),
-      flee: 0, panic: 0,
-    });
-  }
-  return peds;
-}
-
-export function updatePeds(state, dt) {
-  const p = state.player;
-  for (const ped of state.peds) {
-    const dp = Math.hypot(ped.x - p.x, ped.y - p.y);
-    const danger = state.gunshotTimer > 0 || (!p.onFoot && Math.abs(p.speed || 0) > 200 && dp < 160);
-    if (danger && dp < 220) ped.panic = 2.5;
-    if (ped.panic > 0) {
-      ped.panic -= dt;
-      const away = Math.atan2(ped.y - p.y, ped.x - p.x);
-      ped.angle = away;
-      ped.x += Math.cos(away) * 130 * dt;
-      ped.y += Math.sin(away) * 130 * dt;
-    } else {
-      if (state.rng.chance(0.004)) ped.angle = state.rng.range(0, Math.PI * 2);
-      const nx = ped.x + Math.cos(ped.angle) * ped.speed * dt;
-      const ny = ped.y + Math.sin(ped.angle) * ped.speed * dt;
-      if (!collidesBuilding(state.world, nx, ny, 10)) { ped.x = nx; ped.y = ny; }
-      else ped.angle += Math.PI / 2;
-    }
-    ped.x = clamp(ped.x, 30, CFG.WORLD_W - 30);
-    ped.y = clamp(ped.y, 30, CFG.WORLD_H - 30);
-  }
+  if (vehicle.smoke > 0 && !vehicle.exploded) { ctx.fillStyle = "rgba(120,120,120,0.6)"; ctx.beginPath(); ctx.arc(-w / 2, 0, 7 + vehicle.smoke * 4, 0, Math.PI * 2); ctx.fill(); }
+  if (vehicle.exploded) { ctx.fillStyle = "#ff6d00"; ctx.beginPath(); ctx.arc(0, 0, 13, 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = "#ffd54f"; ctx.beginPath(); ctx.arc(0, 0, 7, 0, Math.PI * 2); ctx.fill(); }
+  ctx.restore();
 }
