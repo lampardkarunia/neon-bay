@@ -1,107 +1,118 @@
-// audio.js - Synthesised WebAudio sound and music for NEON BAY.
-// No audio files: every sound is an oscillator / noise burst created in code.
+// audio.js - Tiny WebAudio synth: engine hum, sirens, punches, shots, cash.
+// No audio files; everything is oscillators/noise so the game works offline.
 
-export class AudioEngine {
+export class GameAudio {
   constructor() {
-    this.context = null;
-    this.master = null;
-    this.musicGain = null;
+    this.ctx = null;
     this.muted = false;
-    this.musicTimer = 0;
+    this.master = null;
+    this.sirenOsc = null;
+    this.sirenGain = null;
+    this.musicTimer = null;
     this.noteIndex = 0;
-    this.started = false;
-    try {
-      this.muted = window.localStorage.getItem("neon-bay-muted-v1") === "1";
-    } catch (err) { this.muted = false; }
   }
 
-  ensureContext() {
-    if (this.context) {
-      if (this.context.state === "suspended") this.context.resume();
-      return this.context;
+  ensure() {
+    if (this.ctx) {
+      if (this.ctx.state === "suspended") this.ctx.resume();
+      return true;
     }
-    const Ctor = window.AudioContext || window.webkitAudioContext;
-    if (!Ctor) return null;
-    this.context = new Ctor();
-    this.master = this.context.createGain();
-    this.master.gain.value = this.muted ? 0 : 0.5;
-    this.master.connect(this.context.destination);
-    this.musicGain = this.context.createGain();
-    this.musicGain.gain.value = 0.16;
-    this.musicGain.connect(this.master);
-    this.started = true;
-    return this.context;
+    try {
+      const Ctor = window.AudioContext || window.webkitAudioContext;
+      if (!Ctor) return false;
+      this.ctx = new Ctor();
+      this.master = this.ctx.createGain();
+      this.master.gain.value = this.muted ? 0 : 0.32;
+      this.master.connect(this.ctx.destination);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   setMuted(muted) {
     this.muted = muted;
-    try { window.localStorage.setItem("neon-bay-muted-v1", muted ? "1" : "0"); } catch (err) { void err; }
-    if (this.master && this.context) {
-      this.master.gain.setTargetAtTime(muted ? 0 : 0.5, this.context.currentTime, 0.03);
+    if (this.master && this.ctx) {
+      this.master.gain.setValueAtTime(muted ? 0 : 0.32, this.ctx.currentTime);
     }
   }
 
-  toggleMute() {
-    this.ensureContext();
-    this.setMuted(!this.muted);
-    return this.muted;
-  }
-
-  tone(freq, duration, type, volume, slideTo, destination) {
-    const ctx = this.ensureContext();
-    if (!ctx || this.muted) return;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
+  tone(freq, duration, type, volume, slideTo) {
+    if (!this.ensure()) return;
+    const t = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
     osc.type = type || "square";
-    osc.frequency.setValueAtTime(freq, ctx.currentTime);
-    if (slideTo) osc.frequency.exponentialRampToValueAtTime(Math.max(20, slideTo), ctx.currentTime + duration);
-    gain.gain.setValueAtTime(volume || 0.18, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+    osc.frequency.setValueAtTime(freq, t);
+    if (slideTo) osc.frequency.exponentialRampToValueAtTime(slideTo, t + duration);
+    gain.gain.setValueAtTime(volume || 0.2, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
     osc.connect(gain);
-    gain.connect(destination || this.master);
-    osc.start();
-    osc.stop(ctx.currentTime + duration + 0.02);
+    gain.connect(this.master);
+    osc.start(t);
+    osc.stop(t + duration + 0.02);
   }
 
   noise(duration, volume) {
-    const ctx = this.ensureContext();
-    if (!ctx || this.muted) return;
-    const length = Math.max(1, Math.floor(ctx.sampleRate * duration));
-    const buffer = ctx.createBuffer(1, length, ctx.sampleRate);
+    if (!this.ensure()) return;
+    const length = Math.max(1, Math.floor(this.ctx.sampleRate * duration));
+    const buffer = this.ctx.createBuffer(1, length, this.ctx.sampleRate);
     const data = buffer.getChannelData(0);
-    for (let i = 0; i < length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / length);
-    const source = ctx.createBufferSource();
+    for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1;
+    const source = this.ctx.createBufferSource();
     source.buffer = buffer;
-    const gain = ctx.createGain();
+    const gain = this.ctx.createGain();
     gain.gain.value = volume || 0.2;
     source.connect(gain);
     gain.connect(this.master);
     source.start();
   }
 
-  playShot() { this.tone(190, 0.12, "sawtooth", 0.22, 55); this.noise(0.08, 0.16); }
-  playShotQuiet() { this.tone(170, 0.09, "sawtooth", 0.07, 60); }
-  playPunch() { this.noise(0.07, 0.2); this.tone(95, 0.08, "sine", 0.2, 45); }
-  playCash() { this.tone(880, 0.1, "square", 0.14); setTimeout(() => this.tone(1320, 0.16, "square", 0.14), 90); }
-  playSirenBlip() { this.tone(660, 0.14, "square", 0.1, 990); }
-  playExplosion() { this.noise(0.55, 0.4); this.tone(70, 0.5, "sine", 0.34, 28); }
-  playHorn() { this.tone(340, 0.18, "square", 0.1); }
+  playPunch() { this.noise(0.08, 0.25); this.tone(120, 0.09, "sine", 0.3, 55); }
+  playShot() { this.noise(0.11, 0.32); this.tone(720, 0.08, "sawtooth", 0.16, 120); }
+  playExplosion() { this.noise(0.55, 0.5); this.tone(90, 0.5, "sine", 0.5, 30); }
+  playCash() { this.tone(880, 0.1, "triangle", 0.25); setTimeout(() => this.tone(1320, 0.16, "triangle", 0.25), 70); }
+  playEnterCar() { this.tone(220, 0.09, "triangle", 0.2, 330); }
+  playHurt() { this.tone(160, 0.14, "sawtooth", 0.22, 80); }
 
-  // A tiny sunset-funk loop: bass notes cycling under a soft lead.
-  updateMusic(dt, wanted) {
-    if (!this.context || this.muted) return;
-    this.musicTimer -= dt;
-    if (this.musicTimer > 0) return;
-    this.musicTimer = wanted >= 3 ? 0.24 : 0.34;
-    const bassLine = [55, 55, 65.4, 49, 55, 55, 82.4, 73.4];
-    const leadLine = [220, 261.6, 329.6, 261.6, 293.7, 220, 196, 246.9];
-    const i = this.noteIndex % bassLine.length;
-    this.tone(bassLine[i] * 2, 0.3, "triangle", 0.2, null, this.musicGain);
-    if (this.noteIndex % 2 === 0) this.tone(leadLine[i], 0.22, "sine", 0.1, null, this.musicGain);
-    this.noteIndex += 1;
+  startMusic() {
+    if (this.musicTimer || !this.ensure()) return;
+    const bassline = [55, 55, 65.4, 49, 55, 55, 73.4, 82.4];
+    this.musicTimer = setInterval(() => {
+      if (this.muted) return;
+      const freq = bassline[this.noteIndex % bassline.length];
+      this.noteIndex += 1;
+      this.tone(freq, 0.34, "triangle", 0.13);
+      if (this.noteIndex % 2 === 0) this.tone(freq * 4, 0.12, "sine", 0.05);
+    }, 360);
   }
-}
 
-export function createAudio() {
-  return new AudioEngine();
+  stopMusic() {
+    if (this.musicTimer) clearInterval(this.musicTimer);
+    this.musicTimer = null;
+  }
+
+  setSiren(active) {
+    if (!this.ensure()) return;
+    if (active && !this.sirenOsc) {
+      this.sirenOsc = this.ctx.createOscillator();
+      this.sirenGain = this.ctx.createGain();
+      this.sirenOsc.type = "triangle";
+      this.sirenOsc.frequency.value = 700;
+      this.sirenGain.gain.value = 0.045;
+      this.sirenOsc.connect(this.sirenGain);
+      this.sirenGain.connect(this.master);
+      this.sirenOsc.start();
+      let high = false;
+      this.sirenTimer = setInterval(() => {
+        if (this.sirenOsc) this.sirenOsc.frequency.value = high ? 950 : 650;
+        high = !high;
+      }, 420);
+    } else if (!active && this.sirenOsc) {
+      clearInterval(this.sirenTimer);
+      try { this.sirenOsc.stop(); } catch { /* already stopped */ }
+      this.sirenOsc = null;
+      this.sirenGain = null;
+    }
+  }
 }

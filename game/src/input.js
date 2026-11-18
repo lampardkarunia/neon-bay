@@ -1,94 +1,66 @@
-// input.js - Keyboard state for NEON BAY.
-// Tracks held keys plus one-shot "pressed this frame" edges for actions.
+// input.js - Keyboard state with edge detection for one-shot actions.
 
-export class InputState {
-  constructor() {
-    this.keys = new Set();
+const TRACKED = new Set([
+  "KeyW", "KeyA", "KeyS", "KeyD",
+  "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight",
+  "KeyE", "KeyF", "Space", "KeyP", "KeyM", "Enter",
+]);
+
+export class Input {
+  constructor(target) {
+    this.down = new Set();
     this.pressed = new Set();
-    this.enabled = true;
-    this._onKeyDown = (event) => this.handleKeyDown(event);
-    this._onKeyUp = (event) => this.handleKeyUp(event);
-    this._onBlur = () => { this.keys.clear(); this.pressed.clear(); };
+    this.target = target || window;
+    this.onKeyDown = (event) => {
+      if (TRACKED.has(event.code)) event.preventDefault();
+      if (!this.down.has(event.code)) this.pressed.add(event.code);
+      this.down.add(event.code);
+    };
+    this.onKeyUp = (event) => {
+      this.down.delete(event.code);
+    };
+    this.onBlur = () => {
+      this.down.clear();
+      this.pressed.clear();
+    };
+    this.target.addEventListener("keydown", this.onKeyDown);
+    this.target.addEventListener("keyup", this.onKeyUp);
+    window.addEventListener("blur", this.onBlur);
   }
 
-  attach() {
-    window.addEventListener("keydown", this._onKeyDown);
-    window.addEventListener("keyup", this._onKeyUp);
-    window.addEventListener("blur", this._onBlur);
+  isDown(code) {
+    return this.down.has(code);
   }
 
-  detach() {
-    window.removeEventListener("keydown", this._onKeyDown);
-    window.removeEventListener("keyup", this._onKeyUp);
-    window.removeEventListener("blur", this._onBlur);
+  wasPressed(code) {
+    return this.pressed.has(code);
   }
 
-  normalise(code) {
-    return String(code || "").toLowerCase();
-  }
-
-  handleKeyDown(event) {
-    const code = this.normalise(event.code || event.key);
-    const key = this.normalise(event.key);
-    if (!this.keys.has(code)) this.pressed.add(code);
-    this.keys.add(code);
-    this.keys.add(key);
-    if (["arrowup", "arrowdown", "arrowleft", "arrowright", "space", " "].includes(code) ||
-        ["arrowup", "arrowdown", "arrowleft", "arrowright", " "].includes(key)) {
-      if (event.preventDefault) event.preventDefault();
-    }
-  }
-
-  handleKeyUp(event) {
-    const code = this.normalise(event.code || event.key);
-    const key = this.normalise(event.key);
-    this.keys.delete(code);
-    this.keys.delete(key);
-  }
-
-  isDown(...names) {
-    if (!this.enabled) return false;
-    for (const name of names) {
-      if (this.keys.has(this.normalise(name))) return true;
-    }
-    return false;
-  }
-
-  wasPressed(...names) {
-    for (const name of names) {
-      if (this.pressed.has(this.normalise(name))) return true;
-    }
-    return false;
-  }
-
-  // Movement axes: x -1..1, y -1..1 from WASD or arrow keys.
-  moveAxis() {
+  axisX() {
     let x = 0;
+    if (this.isDown("KeyA") || this.isDown("ArrowLeft")) x -= 1;
+    if (this.isDown("KeyD") || this.isDown("ArrowRight")) x += 1;
+    return x;
+  }
+
+  axisY() {
     let y = 0;
-    if (this.isDown("KeyA", "a", "ArrowLeft")) x -= 1;
-    if (this.isDown("KeyD", "d", "ArrowRight")) x += 1;
-    if (this.isDown("KeyW", "w", "ArrowUp")) y -= 1;
-    if (this.isDown("KeyS", "s", "ArrowDown")) y += 1;
-    if (x !== 0 && y !== 0) {
-      const inv = 1 / Math.sqrt(2);
-      x *= inv;
-      y *= inv;
-    }
-    return { x, y };
+    if (this.isDown("KeyW") || this.isDown("ArrowUp")) y -= 1;
+    if (this.isDown("KeyS") || this.isDown("ArrowDown")) y += 1;
+    return y;
   }
 
   endFrame() {
     this.pressed.clear();
   }
 
-  clearAll() {
-    this.keys.clear();
-    this.pressed.clear();
+  destroy() {
+    this.target.removeEventListener("keydown", this.onKeyDown);
+    this.target.removeEventListener("keyup", this.onKeyUp);
+    window.removeEventListener("blur", this.onBlur);
   }
 }
 
-export function createInput() {
-  const input = new InputState();
-  input.attach();
-  return input;
+export function anyMovementKey(input) {
+  return input.axisX() !== 0 || input.axisY() !== 0;
 }

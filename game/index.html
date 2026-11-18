@@ -3,30 +3,83 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>NEON BAY - HEAT</title>
+<title>Neon Bay — HEAT</title>
 <style>
-  html, body { margin:0; padding:0; background:#0d0620; color:#fff; font-family:system-ui, sans-serif; }
-  body { display:flex; flex-direction:column; align-items:center; min-height:100vh; }
-  header { padding:10px 0 4px; text-align:center; }
-  header h1 { margin:0; font-size:22px; letter-spacing:3px; color:#ffd166; }
-  header p { margin:2px 0 8px; font-size:13px; color:#cdb4f6; }
-  canvas { background:#241536; width:min(1280px, 98vw); height:auto; border:3px solid #ff2e88; border-radius:8px; box-shadow:0 0 34px rgba(255,46,136,.45); }
-  footer { font-size:12px; color:#adb5bd; padding:8px 12px 16px; text-align:center; max-width:900px; }
-  kbd { background:#2b2d42; border:1px solid #555; border-radius:4px; padding:1px 5px; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:#14082e; color:#fff; font-family:system-ui,-apple-system,Segoe UI,sans-serif; overflow:hidden; }
+  #wrap { position:relative; width:1280px; height:720px; margin:0 auto; }
+  canvas#game { display:block; width:1280px; height:720px; background:#2b1055; }
+  #hud { position:absolute; inset:0; pointer-events:none; }
+  #top-left { position:absolute; top:14px; left:16px; width:280px; }
+  #health-bar { height:16px; background:#00000088; border:2px solid #fff; border-radius:8px; overflow:hidden; }
+  #health-fill { height:100%; width:100%; background:#2bff88; transition:width .15s; }
+  #mission-label { margin-top:8px; font-weight:700; color:#ffe600; text-shadow:1px 1px 2px #000; }
+  #objective { margin-top:4px; font-size:15px; line-height:1.35; text-shadow:1px 1px 3px #000; max-width:360px; }
+  #message { margin-top:8px; font-size:15px; color:#bffcff; text-shadow:1px 1px 3px #000; transition:opacity .4s; max-width:380px; }
+  #top-right { position:absolute; top:14px; right:16px; text-align:right; }
+  #stars { font-size:28px; letter-spacing:3px; color:#888; text-shadow:2px 2px 3px #000; }
+  #money { font-size:26px; font-weight:800; color:#2bff88; text-shadow:1px 1px 3px #000; }
+  #district { font-size:15px; color:#ffd6f2; text-shadow:1px 1px 2px #000; }
+  #vehicle-label { position:absolute; left:16px; bottom:14px; font-size:14px; text-shadow:1px 1px 3px #000; }
+  #minimap { position:absolute; right:16px; bottom:14px; width:220px; height:165px; border:2px solid #fff; border-radius:6px; background:#1a1033; }
+  #save-btn-hud { position:absolute; left:16px; bottom:44px; pointer-events:auto; background:#ff2e88; color:#fff; border:0; border-radius:6px; padding:7px 14px; font-weight:700; cursor:pointer; }
+  .overlay { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; background:linear-gradient(160deg,#2b1055ee,#ff2e88bb 55%,#ff8c1acc); text-align:center; z-index:5; }
+  .overlay h1 { font-size:76px; margin:0; letter-spacing:4px; color:#ffe600; text-shadow:4px 4px 0 #ff2e88, 8px 8px 24px #000; }
+  .overlay h2 { margin:6px 0 10px; color:#bffcff; letter-spacing:6px; }
+  .overlay p { max-width:620px; line-height:1.5; color:#fff; }
+  .btn { pointer-events:auto; background:#ffe600; color:#20102e; border:0; border-radius:8px; padding:13px 30px; font-size:18px; font-weight:800; margin:6px; cursor:pointer; }
+  .btn.secondary { background:#fff; }
+  #pause-menu, #dead-banner { display:none; }
+  .controls { font-size:14px; color:#ffeaa7; }
 </style>
 </head>
 <body>
-<header>
-  <h1>NEON BAY</h1>
-  <p>Jax Marlowe &middot; Rae's jobs &middot; Outrun the HEAT across Marina, Downtown, Barrio &amp; Portside</p>
-</header>
-<canvas id="game" width="1280" height="720"></canvas>
-<footer>
-  Controls: <kbd>W A S D</kbd> move / drive &middot; <kbd>E</kbd> enter / exit car &middot;
-  <kbd>F</kbd> punch &middot; <kbd>Space</kbd> shoot &middot; <kbd>Enter</kbd> start job &middot;
-  <kbd>P</kbd> pause &middot; <kbd>M</kbd> mute. Steal cars, finish 4 jobs, and hide or swap cars to cool your wanted stars.
-  Original game, vanilla JavaScript, no assets, works fully offline.
-</footer>
+<div id="wrap">
+  <canvas id="game" width="1280" height="720"></canvas>
+  <div id="hud">
+    <div id="top-left">
+      <div id="health-bar"><div id="health-fill"></div></div>
+      <div id="mission-label">Job 1 / 4</div>
+      <div id="objective">Loading Neon Bay…</div>
+      <div id="message"></div>
+    </div>
+    <div id="top-right">
+      <div id="stars">☆☆☆☆☆</div>
+      <div id="money">$120</div>
+      <div id="district">Marina</div>
+    </div>
+    <div id="vehicle-label">On foot</div>
+    <button id="save-btn-hud" type="button">Save</button>
+    <canvas id="minimap" width="220" height="165"></canvas>
+  </div>
+
+  <div id="title-screen" class="overlay">
+    <h1>NEON BAY</h1>
+    <h2>H E A T</h2>
+    <p>Jax Marlowe was the best getaway driver on the coast — until one job went wrong.
+       Now Rae has work, the bay has fast cars, and every star on your tail makes the night hotter.
+       Steal smart, drive faster, and disappear before the heat closes in.</p>
+    <div>
+      <button id="start-btn" class="btn" type="button">Start Game</button>
+      <button id="load-btn" class="btn secondary" type="button">Load Save</button>
+    </div>
+    <p class="controls">WASD / Arrows — move &amp; drive · E — enter / exit / steal car · F — punch · Space — shoot<br>P — pause · M — mute · Districts: Marina · Downtown · Barrio · Portside</p>
+  </div>
+
+  <div id="pause-menu" class="overlay">
+    <h1>PAUSED</h1>
+    <p>The bay waits. The heat does not.</p>
+    <div>
+      <button id="resume-btn" class="btn" type="button">Resume</button>
+      <button id="save-btn" class="btn secondary" type="button">Save Game</button>
+    </div>
+  </div>
+
+  <div id="dead-banner" class="overlay">
+    <h1>WASTED</h1>
+    <p>Jax wakes up back in Marina, a little poorer and a lot more careful.</p>
+  </div>
+</div>
 <script type="module" src="./src/main.js"></script>
 </body>
 </html>

@@ -1,7 +1,7 @@
-// player.js - Jax Marlowe: on-foot movement, health, vehicle entry.
-// Jax is an original protagonist: an ex-getaway driver starting over in Neon Bay.
+// player.js - Jax Marlowe: on-foot movement, health, money and state.
 
-import { PLAYER_SPEED, PLAYER_RUN_SPEED, PLAYER_RADIUS, PLAYER_MAX_HEALTH, clamp, distanceBetween } from "./config.js";
+import { PLAYER_SPEED, PLAYER_RADIUS, PLAYER_MAX_HEALTH } from "./config.js";
+import { clampToWorld, resolveBuildingCollision } from "./world.js";
 
 export function createPlayer(x, y) {
   return {
@@ -14,12 +14,11 @@ export function createPlayer(x, y) {
     maxHealth: PLAYER_MAX_HEALTH,
     money: 120,
     vehicle: null,
-    punchCooldown: 0,
-    shootCooldown: 0,
+    punchTimer: 0,
+    shootTimer: 0,
     hurtFlash: 0,
-    walkCycle: 0,
     dead: false,
-    hidden: false,
+    steps: 0,
   };
 }
 
@@ -30,95 +29,48 @@ export function playerPosition(player) {
 
 export function damagePlayer(player, amount) {
   if (player.dead) return;
-  player.health = clamp(player.health - amount, 0, player.maxHealth);
-  player.hurtFlash = 0.35;
-  if (player.health <= 0) player.dead = true;
+  player.health -= amount;
+  player.hurtFlash = 0.25;
+  if (player.health <= 0) {
+    player.health = 0;
+    player.dead = true;
+  }
 }
 
 export function healPlayer(player, amount) {
-  player.health = clamp(player.health + amount, 0, player.maxHealth);
-  if (player.health > 0) player.dead = false;
+  player.health = Math.min(player.maxHealth, player.health + amount);
 }
 
-export function nearestVehicle(player, vehicles, maxDistance) {
-  let best = null;
-  let bestDist = maxDistance;
-  for (const vehicle of vehicles) {
-    if (vehicle.destroyed) continue;
-    const d = distanceBetween(player.x, player.y, vehicle.x, vehicle.y);
-    if (d < bestDist) { best = vehicle; bestDist = d; }
-  }
-  return best;
+export function addMoney(player, amount) {
+  player.money += amount;
+  return player.money;
 }
 
-export function enterVehicle(game, vehicle) {
-  const player = game.player;
-  player.vehicle = vehicle;
-  vehicle.driver = "player";
-  vehicle.occupied = true;
-  player.x = vehicle.x;
-  player.y = vehicle.y;
-  if (!vehicle.stolen && vehicle.owner !== "player") {
-    vehicle.stolen = true;
-    game.onCrime("theft", vehicle.x, vehicle.y);
-  }
-}
-
-export function exitVehicle(game) {
-  const player = game.player;
-  const vehicle = player.vehicle;
-  if (!vehicle) return;
-  vehicle.driver = null;
-  vehicle.occupied = false;
-  vehicle.speed = 0;
-  // Step out beside the car, nudged clear of buildings.
-  const sideX = vehicle.x + Math.cos(vehicle.angle + Math.PI / 2) * 30;
-  const sideY = vehicle.y + Math.sin(vehicle.angle + Math.PI / 2) * 30;
-  const resolved = game.world.resolveCollision(sideX, sideY, player.radius);
-  player.x = resolved.x;
-  player.y = resolved.y;
-  player.vehicle = null;
-}
-
-export function updatePlayer(game, dt) {
-  const player = game.player;
-  const input = game.input;
-  player.punchCooldown = Math.max(0, player.punchCooldown - dt);
-  player.shootCooldown = Math.max(0, player.shootCooldown - dt);
+export function updatePlayerOnFoot(player, input, world, dt) {
+  if (player.dead || player.vehicle) return;
+  player.punchTimer = Math.max(0, player.punchTimer - dt);
+  player.shootTimer = Math.max(0, player.shootTimer - dt);
   player.hurtFlash = Math.max(0, player.hurtFlash - dt);
 
-  if (player.vehicle) {
-    player.x = player.vehicle.x;
-    player.y = player.vehicle.y;
-    player.angle = player.vehicle.angle;
-    if (input.wasPressed("KeyE", "e")) exitVehicle(game);
-    return;
+  const ax = input.axisX();
+  const ay = input.axisY();
+  const len = Math.hypot(ax, ay) || 1;
+  const moving = ax !== 0 || ay !== 0;
+  if (moving) {
+    player.x += (ax / len) * PLAYER_SPEED * dt;
+    player.y += (ay / len) * PLAYER_SPEED * dt;
+    player.angle = Math.atan2(ay, ax);
+    player.steps += dt * 7;
   }
+  clampToWorld(player, player.radius + 2);
+  resolveBuildingCollision(world, player, player.radius);
+}
 
-  if (input.wasPressed("KeyE", "e")) {
-    const vehicle = nearestVehicle(player, game.vehicles, 46);
-    if (vehicle) { enterVehicle(game, vehicle); return; }
-  }
-
-  const axis = input.moveAxis();
-  const running = input.isDown("ShiftLeft", "ShiftRight", "shift");
-  const speed = running ? PLAYER_RUN_SPEED : PLAYER_SPEED;
-  player.vx = axis.x * speed;
-  player.vy = axis.y * speed;
-  if (axis.x !== 0 || axis.y !== 0) {
-    player.angle = Math.atan2(axis.y, axis.x);
-    player.walkCycle += dt * (running ? 11 : 8);
-    const nextX = player.x + player.vx * dt;
-    const nextY = player.y + player.vy * dt;
-    if (!game.world.collides(nextX, player.y, player.radius)) player.x = nextX;
-    if (!game.world.collides(player.x, nextY, player.radius)) player.y = nextY;
-    const fixed = game.world.resolveCollision(player.x, player.y, player.radius);
-    player.x = fixed.x;
-    player.y = fixed.y;
-  } else {
-    player.walkCycle = 0;
-  }
-
-  // Hidden when standing still off-road away from police sight (see police.js).
-  player.hidden = (axis.x === 0 && axis.y === 0);
+export function respawnPlayer(player, x, y) {
+  player.x = x;
+  player.y = y;
+  player.health = player.maxHealth;
+  player.dead = false;
+  player.vehicle = null;
+  player.hurtFlash = 0;
 }

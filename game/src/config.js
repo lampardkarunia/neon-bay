@@ -1,71 +1,107 @@
-// config.js - Central tuning constants for NEON BAY (HEAT variant)
-// All gameplay numbers live here so balancing is easy to audit.
+// config.js - Central tuning and world constants for Neon Bay (HEAT variant).
+// All gameplay numbers live here so other modules stay logic-only.
 
-export const WORLD_WIDTH = 2560;
-export const WORLD_HEIGHT = 2560;
-export const BLOCK_SIZE = 320;
-export const ROAD_WIDTH = 88;
-export const CANVAS_WIDTH = 1280;
-export const CANVAS_HEIGHT = 720;
+export const WORLD_WIDTH = 3200;
+export const WORLD_HEIGHT = 2400;
+export const BLOCK_SIZE = 400;
+export const ROAD_WIDTH = 92;
+export const VIEW_WIDTH = 1280;
+export const VIEW_HEIGHT = 720;
 
-export const PLAYER_SPEED = 168;
-export const PLAYER_RUN_SPEED = 238;
+export const PLAYER_SPEED = 178;
 export const PLAYER_RADIUS = 13;
 export const PLAYER_MAX_HEALTH = 100;
+export const PLAYER_PUNCH_RANGE = 42;
+export const PLAYER_PUNCH_DAMAGE = 34;
+export const PLAYER_PUNCH_COOLDOWN = 0.32;
+export const BULLET_SPEED = 640;
+export const BULLET_DAMAGE = 38;
+export const BULLET_COOLDOWN = 0.24;
+export const BULLET_LIFETIME = 0.7;
 
 export const WANTED_MAX = 5;
-export const WANTED_DECAY_SECONDS = 8;      // hidden time needed per star drop (tuned in revision: snappier escapes)
-export const WANTED_SIGHT_RANGE = 430;      // police vision radius
-export const HEAT_FROM_CAR_THEFT = 1;
-export const HEAT_FROM_HIT = 1;
-export const HEAT_FROM_SHOT = 1;
+export const WANTED_DECAY_SECONDS = 9;
+export const HEAT_FOR_CAR_THEFT = 1;
+export const HEAT_FOR_HIT = 1;
+export const HEAT_FOR_SHOT = 1;
+
+export const SAVE_KEY = "neon-bay-save-v1";
 
 export const DISTRICTS = [
-  { name: "Marina",    color: "#ff7e5f", accent: "#ffd166" },
-  { name: "Downtown",  color: "#c77dff", accent: "#48cae4" },
-  { name: "Barrio",    color: "#ff9f1c", accent: "#ff5964" },
-  { name: "Portside",  color: "#2ec4b6", accent: "#a7c957" },
+  { name: "Marina", x: 0, y: 0, w: 1600, h: 1200, tint: "#ff9a5c" },
+  { name: "Downtown", x: 1600, y: 0, w: 1600, h: 1200, tint: "#ff5c8a" },
+  { name: "Barrio", x: 0, y: 1200, w: 1600, h: 1200, tint: "#c86bff" },
+  { name: "Portside", x: 1600, y: 1200, w: 1600, h: 1200, tint: "#3ec6e0" },
 ];
 
 export const VEHICLE_TYPES = {
-  sedan: { label: "Sedan",  width: 38, height: 20, accel: 210, maxSpeed: 265, turn: 2.6, grip: 0.92, health: 110, color: "#4cc9f0" },
-  sport: { label: "Sport",  width: 40, height: 19, accel: 340, maxSpeed: 390, turn: 3.1, grip: 0.94, health: 85,  color: "#ff2e88" },
-  truck: { label: "Truck",  width: 52, height: 24, accel: 145, maxSpeed: 195, turn: 1.9, grip: 0.88, health: 190, color: "#ffd166" },
-  police:{ label: "Police", width: 39, height: 20, accel: 285, maxSpeed: 330, turn: 2.9, grip: 0.93, health: 140, color: "#f1fa8c" },
+  sedan: {
+    label: "Sedan",
+    width: 44,
+    height: 22,
+    maxSpeed: 300,
+    accel: 210,
+    brake: 320,
+    turnRate: 2.6,
+    health: 120,
+    colours: ["#e74c3c", "#3498db", "#f1c40f", "#ecf0f1", "#9b59b6", "#1abc9c"],
+  },
+  sport: {
+    label: "Sport Coupe",
+    width: 46,
+    height: 21,
+    maxSpeed: 430,
+    accel: 330,
+    brake: 360,
+    turnRate: 3.1,
+    health: 90,
+    colours: ["#ff2e88", "#ff8c1a", "#ffe600", "#00e5ff", "#b6ff00"],
+  },
+  truck: {
+    label: "Van / Truck",
+    width: 56,
+    height: 26,
+    maxSpeed: 225,
+    accel: 150,
+    brake: 260,
+    turnRate: 2.0,
+    health: 210,
+    colours: ["#95a5a6", "#f39c12", "#2ecc71", "#e67e22", "#dfe6e9"],
+  },
+  police: {
+    label: "Police Cruiser",
+    width: 45,
+    height: 22,
+    maxSpeed: 390,
+    accel: 300,
+    brake: 380,
+    turnRate: 3.0,
+    health: 160,
+    colours: ["#101828"],
+  },
 };
 
-export const SAVE_KEY = "neon-bay-save-v1";
-export const MUTE_KEY = "neon-bay-muted-v1";
-
-export const COLORS = {
-  sky: "#1b1035",
-  road: "#2b2d42",
-  roadLine: "#ffd166",
-  sidewalk: "#3d405b",
-  sand: "#e9c46a",
+export const PALETTE = {
+  sky: "#2b1055",
+  groundMarina: "#f7b267",
+  groundDowntown: "#8d6e9f",
+  groundBarrio: "#7fb069",
+  groundPortside: "#4a7c8c",
+  sidewalk: "#d9c7a7",
+  road: "#2f3542",
+  roadLine: "#ffd32a",
   water: "#118ab2",
-  grass: "#2a9d8f",
-  buildingRoof: ["#ef476f", "#ffd166", "#06d6a0", "#118ab2", "#c77dff", "#ff9f1c", "#f72585", "#4cc9f0"],
-  neonPink: "#ff2e88",
-  neonCyan: "#00f5d4",
-  text: "#ffffff",
+  sand: "#ffd166",
+  buildingRoofs: [
+    "#ef476f", "#ffd166", "#06d6a0", "#118ab2", "#9b5de5",
+    "#f15bb5", "#00bbf9", "#fee440", "#e07a5f", "#3d405b",
+    "#81b29a", "#f2cc8f", "#e63946", "#457b9d", "#a8dadc",
+  ],
 };
 
-export function clamp(value, min, max) {
-  if (value < min) return min;
-  if (value > max) return max;
-  return value;
-}
-
-export function distanceBetween(ax, ay, bx, by) {
-  const dx = ax - bx;
-  const dy = ay - by;
-  return Math.sqrt(dx * dx + dy * dy);
-}
-
-export function angleLerp(a, b, t) {
-  let diff = (b - a) % (Math.PI * 2);
-  if (diff > Math.PI) diff -= Math.PI * 2;
-  if (diff < -Math.PI) diff += Math.PI * 2;
-  return a + diff * t;
+export function districtAt(x, y) {
+  for (const d of DISTRICTS) {
+    if (x >= d.x && x < d.x + d.w && y >= d.y && y < d.y + d.h) return d;
+  }
+  return DISTRICTS[0];
 }

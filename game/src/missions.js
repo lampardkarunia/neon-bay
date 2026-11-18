@@ -1,219 +1,138 @@
-// missions.js - Rae's mission chain for Jax Marlowe in Neon Bay.
-// Four linked jobs: learn the city, repo a car, run a package, escape the finale.
+// missions.js - Rae's mission chain for Jax: four linked jobs with rewards.
+// Each mission is data + a check function; main.js owns rendering the marker.
 
-import { distanceBetween } from "./config.js";
-import { createVehicle } from "./vehicles.js";
-import { spawnHostiles } from "./combat.js";
+import { districtNameAt } from "./world.js";
 
 export const MISSION_DEFS = [
   {
     id: "getaway",
     title: "First Wheels",
     giver: "Rae",
-    intro: "Rae: Jax, I left a sedan by the Marina plaza. Get in and bring it to the Downtown garage.",
-    objective: "Get in the marked sedan",
-    reward: 250,
+    brief: "Rae: Grab any car near the Marina and shake the heat, Jax.",
+    objective: "Steal a car in Marina, then lose your wanted level",
+    reward: 150,
+    target: { x: 600, y: 600 },
+    targetLabel: "Marina car",
   },
   {
     id: "repo",
     title: "Repo Run",
     giver: "Rae",
-    intro: "Rae: A sport coupe in the Barrio is three payments late. Take it, lose any heat, park it at the Portside lot.",
-    objective: "Steal the marked sport coupe in the Barrio",
-    reward: 600,
+    brief: "Rae: A pink sport coupe in Downtown owes us. Bring it to Portside.",
+    objective: "Take the marked sport coupe to the Portside drop-off",
+    reward: 300,
+    target: { x: 2400, y: 600 },
+    targetLabel: "Sport coupe",
+    drop: { x: 2600, y: 1800 },
   },
   {
     id: "package",
-    title: "Cross-Bay Package",
+    title: "Cross-Town Package",
     giver: "Rae",
-    intro: "Rae: Pick up the package at Portside and deliver it across the bay to the Marina dock. Do not wreck the ride.",
-    objective: "Pick up the package at Portside",
-    reward: 900,
+    brief: "Rae: Small package, long drive. Barrio pickup, Marina delivery.",
+    objective: "Pick up the package in Barrio and deliver it to Marina",
+    reward: 420,
+    target: { x: 600, y: 1800 },
+    targetLabel: "Barrio pickup",
+    drop: { x: 700, y: 500 },
   },
   {
     id: "finale",
-    title: "Neon Finale",
+    title: "Neon Getaway",
     giver: "Rae",
-    intro: "Rae: Last job. Grab the truck, survive the heat, and reach the Marina pier. Five stars means the whole bay is watching.",
-    objective: "Get in the marked truck",
-    reward: 2000,
+    brief: "Rae: Last job. Reach the Portside pier with the heat on your tail.",
+    objective: "Reach the Portside pier while wanted, then escape",
+    reward: 800,
+    target: { x: 2800, y: 2000 },
+    targetLabel: "Portside pier",
   },
 ];
 
 export function createMissionState() {
   return {
     index: 0,
-    stage: 0,
-    active: false,
-    complete: false,
-    failed: false,
-    objectiveText: "Talk to Rae - start the first job from the HUD prompt",
-    marker: null,       // { x, y, label }
-    targetVehicle: null,
-    message: "",
-    messageTimer: 0,
-    startedAt: 0,
+    phase: "goto", // goto | deliver | escape | done
+    active: true,
+    completed: [],
+    message: MISSION_DEFS[0].brief,
+    messageTimer: 6,
+    totalEarned: 0,
   };
 }
 
 export function currentMission(state) {
-  if (state.index >= MISSION_DEFS.length) return null;
+  if (!state || state.index >= MISSION_DEFS.length) return null;
   return MISSION_DEFS[state.index];
 }
 
-export function startMission(game) {
-  const state = game.missions;
-  const def = currentMission(state);
-  if (!def || state.active) return;
-  state.active = true;
-  state.failed = false;
-  state.stage = 0;
-  state.startedAt = game.time;
-  showMessage(game, def.intro, 6);
-  setupMissionStage(game);
+export function missionTarget(state) {
+  const mission = currentMission(state);
+  if (!mission) return null;
+  if (state.phase === "deliver" && mission.drop) return { ...mission.drop, label: "Drop-off" };
+  return { ...mission.target, label: mission.targetLabel };
 }
 
-export function showMessage(game, text, seconds) {
-  game.missions.message = text;
-  game.missions.messageTimer = seconds || 4;
+export function objectiveText(state) {
+  const mission = currentMission(state);
+  if (!mission) return "Free roam Neon Bay — all jobs done. Nice work, Jax.";
+  if (state.phase === "deliver") return `${mission.title}: reach the drop-off`;
+  if (state.phase === "escape") return `${mission.title}: lose the heat!`;
+  return `${mission.title}: ${mission.objective}`;
 }
 
-function setMarker(game, x, y, label) {
-  game.missions.marker = { x, y, label };
-  game.missions.objectiveText = label;
-}
-
-function placeTargetVehicle(game, type, x, y, angle) {
-  const vehicle = createVehicle(type, x, y, angle);
-  vehicle.owner = "mission";
-  vehicle.isMissionTarget = true;
-  game.vehicles.push(vehicle);
-  game.missions.targetVehicle = vehicle;
-  return vehicle;
-}
-
-export function setupMissionStage(game) {
-  const state = game.missions;
-  const def = currentMission(state);
-  if (!def) { state.complete = true; state.marker = null; state.objectiveText = "All jobs done - Neon Bay is yours. Free roam!"; return; }
-  if (def.id === "getaway") {
-    if (state.stage === 0) {
-      const car = placeTargetVehicle(game, "sedan", 640, 480, 0);
-      setMarker(game, car.x, car.y, "Get in the marked sedan near Marina plaza");
-    } else {
-      setMarker(game, 1760, 480, "Drive to the Downtown garage");
-    }
-  } else if (def.id === "repo") {
-    if (state.stage === 0) {
-      const car = placeTargetVehicle(game, "sport", 560, 1760, Math.PI / 2);
-      setMarker(game, car.x, car.y, "Steal the marked sport coupe in the Barrio");
-    } else {
-      setMarker(game, 1920, 1920, "Park the coupe at the Portside lot - lose the heat first");
-    }
-  } else if (def.id === "package") {
-    if (state.stage === 0) {
-      setMarker(game, 1980, 1820, "Pick up the package at Portside");
-    } else {
-      setMarker(game, 330, 980, "Deliver the package to the Marina dock");
-    }
-  } else if (def.id === "finale") {
-    if (state.stage === 0) {
-      const truck = placeTargetVehicle(game, "truck", 1760, 1760, -Math.PI / 2);
-      setMarker(game, truck.x, truck.y, "Get in the marked truck in Portside");
-    } else {
-      setMarker(game, 180, 980, "Escape to the Marina pier - survive the heat!");
-    }
-  }
-}
-
-export function completeMission(game) {
-  const state = game.missions;
-  const def = currentMission(state);
-  if (!def) return;
-  game.player.money += def.reward;
-  game.moneyEarned += def.reward;
-  showMessage(game, `Job done: ${def.title}  +$${def.reward}. Rae: Knew you still had it, Jax.`, 6);
-  game.audio.playCash();
-  state.active = false;
+function completeMission(state, player, audio) {
+  const mission = currentMission(state);
+  if (!mission) return;
+  player.money += mission.reward;
+  state.totalEarned += mission.reward;
+  state.completed.push(mission.id);
   state.index += 1;
-  state.stage = 0;
-  state.targetVehicle = null;
-  state.marker = null;
-  if (state.index >= MISSION_DEFS.length) {
-    state.complete = true;
-    state.objectiveText = "All jobs done - Neon Bay is yours. Free roam!";
-  } else {
-    state.objectiveText = `Next job ready: ${MISSION_DEFS[state.index].title} - press Enter to start`;
-  }
+  state.phase = "goto";
+  const next = currentMission(state);
+  state.message = next
+    ? `+$${mission.reward} — ${next.brief}`
+    : `+$${mission.reward} — Chain complete. Neon Bay is yours tonight.`;
+  state.messageTimer = 6;
+  if (audio) audio.playCash();
 }
 
-export function failMission(game, reason) {
-  const state = game.missions;
-  state.active = false;
-  state.failed = true;
-  state.marker = null;
-  state.targetVehicle = null;
-  state.objectiveText = `Job failed: ${reason} - press Enter to retry ${currentMission(state) ? currentMission(state).title : ""}`;
-  showMessage(game, `Rae: That went sideways. ${reason}`, 5);
-}
-
-function reachedMarker(game, radius) {
-  const marker = game.missions.marker;
-  if (!marker) return false;
-  const pos = game.player.vehicle || game.player;
-  return distanceBetween(pos.x, pos.y, marker.x, marker.y) < radius;
-}
-
-export function updateMissions(game, dt) {
-  const state = game.missions;
+export function updateMissions(state, player, pos, heat, dt, context) {
   state.messageTimer = Math.max(0, state.messageTimer - dt);
-  if (!state.active) {
-    if (game.input.wasPressed("Enter", "enter") && !state.complete) startMission(game);
-    return;
-  }
-  const def = currentMission(state);
-  if (!def) return;
-  const target = state.targetVehicle;
+  const mission = currentMission(state);
+  if (!mission || player.dead) return;
 
-  if (def.id === "getaway") {
-    if (state.stage === 0 && game.player.vehicle && target && game.player.vehicle === target) {
-      state.stage = 1; setupMissionStage(game); showMessage(game, "Rae: Good. Now the Downtown garage - follow the gold marker.", 4);
-    } else if (state.stage === 1 && reachedMarker(game, 78)) {
-      completeMission(game);
-    }
-  } else if (def.id === "repo") {
-    if (state.stage === 0 && game.player.vehicle && target && game.player.vehicle === target) {
-      state.stage = 1; setupMissionStage(game);
-      game.setWantedAtLeast(2);
-      showMessage(game, "Rae: That alarm is loud. Lose the heat, then Portside.", 4);
-    } else if (state.stage === 1 && reachedMarker(game, 82)) {
-      if (game.wanted > 0) {
-        state.objectiveText = "Lose the heat before parking at Portside!";
-      } else {
-        completeMission(game);
-      }
-    }
-    if (target && target.destroyed) failMission(game, "The repo car was destroyed.");
-  } else if (def.id === "package") {
-    if (state.stage === 0 && reachedMarker(game, 70)) {
-      state.stage = 1; setupMissionStage(game);
-      spawnHostiles(game, game.player.x + 130, game.player.y + 60, 2);
-      showMessage(game, "Rae: Company incoming - get that package to Marina!", 4);
-    } else if (state.stage === 1 && reachedMarker(game, 78)) {
-      completeMission(game);
-    }
-  } else if (def.id === "finale") {
-    if (state.stage === 0 && game.player.vehicle && target && game.player.vehicle === target) {
-      state.stage = 1; setupMissionStage(game);
-      game.setWantedAtLeast(5);
-      showMessage(game, "Rae: Whole bay is lit up. Drive, Jax. Pier. Now.", 5);
-    } else if (state.stage === 1 && reachedMarker(game, 92)) {
-      game.setWanted(0);
-      completeMission(game);
-    }
-    if (target && target.destroyed && state.stage === 0) failMission(game, "The finale truck was destroyed.");
-  }
+  const target = missionTarget(state);
+  const dist = target ? Math.hypot(pos.x - target.x, pos.y - target.y) : 9999;
 
-  // Generic guard: dying fails the active job.
-  if (game.player.dead) failMission(game, "Jax went down.");
+  if (mission.id === "getaway") {
+    if (state.phase === "goto" && player.vehicle) state.phase = "escape";
+    else if (state.phase === "escape" && heat.wanted === 0 && player.vehicle) {
+      completeMission(state, player, context && context.audio);
+    } else if (state.phase === "goto" && dist < 90 && player.vehicle) {
+      state.phase = "escape";
+    }
+  } else if (mission.id === "repo") {
+    if (state.phase === "goto" && dist < 110) state.phase = "deliver";
+    else if (state.phase === "deliver" && dist < 110) completeMission(state, player, context && context.audio);
+  } else if (mission.id === "package") {
+    if (state.phase === "goto" && dist < 100) {
+      state.phase = "deliver";
+      state.message = "Package picked up. Get it to Marina, fast.";
+      state.messageTimer = 4;
+    } else if (state.phase === "deliver" && dist < 110) {
+      completeMission(state, player, context && context.audio);
+    }
+  } else if (mission.id === "finale") {
+    if (state.phase === "goto" && dist < 130) {
+      if (heat.wanted >= 1) state.phase = "escape";
+      else completeMission(state, player, context && context.audio);
+    } else if (state.phase === "escape" && heat.wanted === 0) {
+      completeMission(state, player, context && context.audio);
+    }
+  }
+  void districtNameAt;
+}
+
+export function missionProgressLabel(state) {
+  return `Job ${Math.min(state.index + 1, MISSION_DEFS.length)} / ${MISSION_DEFS.length}`;
 }

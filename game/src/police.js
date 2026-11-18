@@ -1,251 +1,162 @@
-// police.js - The HEAT system: wanted stars, pursuit AI, roadblocks, helicopter.
-// This is the signature system of the HEAT variant of NEON BAY.
+// police.js - HEAT system: wanted stars, police pursuit, roadblocks, heli.
+// This is the emphasis of the HEAT variant: pressure scales with stars.
 
-import { WANTED_MAX, WANTED_DECAY_SECONDS, WANTED_SIGHT_RANGE, clamp, distanceBetween } from "./config.js";
+import { WANTED_MAX, WANTED_DECAY_SECONDS } from "./config.js";
 import { createVehicle } from "./vehicles.js";
+import { getRng } from "./random.js";
+import { clampToWorld, resolveBuildingCollision } from "./world.js";
 
-export function createPoliceState() {
+export function createHeat() {
   return {
-    units: [],          // { vehicle, mode, ramTimer, blockTarget }
-    helicopter: null,   // { x, y, angle, spotlight }
-    roadblocks: [],     // { x, y, angle, vehicleA, vehicleB }
+    wanted: 0,
     hiddenTimer: 0,
-    spawnTimer: 0,
-    lastSeenX: 0,
-    lastSeenY: 0,
-    seenNow: false,
+    seenTimer: 0,
+    lastCrime: "",
+    decayClock: 0,
   };
 }
 
-export function addWanted(game, amount) {
-  const before = game.wanted;
-  game.wanted = clamp(game.wanted + amount, 0, WANTED_MAX);
-  if (game.wanted > before) {
-    game.police.hiddenTimer = 0;
-    game.audio.playSirenBlip();
-  }
+export function raiseWanted(heat, amount, reason) {
+  const before = heat.wanted;
+  heat.wanted = Math.min(WANTED_MAX, heat.wanted + amount);
+  heat.lastCrime = reason || heat.lastCrime;
+  heat.hiddenTimer = 0;
+  heat.decayClock = 0;
+  return heat.wanted > before;
 }
 
-export function setWanted(game, level) {
-  game.wanted = clamp(level, 0, WANTED_MAX);
-  game.police.hiddenTimer = 0;
+export function clearWanted(heat) {
+  heat.wanted = 0;
+  heat.hiddenTimer = 0;
+  heat.decayClock = 0;
 }
 
 export function policeCountForWanted(wanted) {
-  return [0, 2, 3, 4, 6, 7][clamp(wanted, 0, 5)];
+  if (wanted <= 0) return 0;
+  if (wanted === 1) return 1;
+  if (wanted === 2) return 2;
+  if (wanted === 3) return 3;
+  if (wanted === 4) return 4;
+  return 5;
 }
 
-export function spawnPoliceUnit(game, nearX, nearY) {
-  const rng = game.rng;
-  const angle = rng.range(0, Math.PI * 2);
-  const distance = rng.range(430, 560);
-  let x = clamp(nearX + Math.cos(angle) * distance, 60, game.world.width - 60);
-  let y = clamp(nearY + Math.sin(angle) * distance, 60, game.world.height - 60);
-  const road = game.world.randomRoadPoint ? { x, y } : { x, y };
-  void road;
-  const fixed = game.world.resolveCollision(x, y, 20);
-  x = fixed.x; y = fixed.y;
-  const vehicle = createVehicle("police", x, y, angle + Math.PI, "#ffffff");
-  vehicle.driver = "police";
-  vehicle.occupied = true;
-  vehicle.owner = "police";
-  vehicle.isPolice = true;
-  game.vehicles.push(vehicle);
-  const unit = { vehicle, mode: "chase", ramTimer: rng.range(0.4, 1.4), searchTimer: 0 };
-  game.police.units.push(unit);
-  return unit;
+export function createPoliceUnit(x, y) {
+  const car = createVehicle("police", x, y, 0, "#101828");
+  car.isPolice = true;
+  car.officerHealth = 80;
+  car.officerDown = false;
+  return car;
 }
 
-export function removePoliceUnit(game, unit) {
-  game.police.units = game.police.units.filter((u) => u !== unit);
-  game.vehicles = game.vehicles.filter((v) => v !== unit.vehicle);
-}
-
-export function spawnRoadblocks(game) {
-  const wanted = game.wanted;
-  if (wanted < 3) return;
-  const desired = wanted - 2;
-  const police = game.police;
-  while (police.roadblocks.length < desired) {
-    const aheadAngle = game.player.vehicle ? game.player.vehicle.angle : game.player.angle;
-    const baseX = game.player.x + Math.cos(aheadAngle) * 520;
-    const baseY = game.player.y + Math.sin(aheadAngle) * 520;
-    const block = {
-      x: clamp(baseX, 80, game.world.width - 80),
-      y: clamp(baseY, 80, game.world.height - 80),
-      angle: aheadAngle + Math.PI / 2,
-      id: police.roadblocks.length + 1,
-    };
-    police.roadblocks.push(block);
-    game.audio.playSirenBlip();
+export function spawnPoliceNear(heat, police, target, world) {
+  const wantedCount = policeCountForWanted(heat.wanted);
+  const rng = getRng();
+  while (police.length < wantedCount) {
+    const angle = rng.range(0, Math.PI * 2);
+    const dist = rng.range(420, 560);
+    const x = Math.max(50, Math.min(world.width - 50, target.x + Math.cos(angle) * dist));
+    const y = Math.max(50, Math.min(world.height - 50, target.y + Math.sin(angle) * dist));
+    police.push(createPoliceUnit(x, y));
   }
+  while (police.length > wantedCount && wantedCount > 0) police.pop();
+  if (wantedCount === 0) police.length = 0;
 }
 
-export function updateHelicopter(game, dt) {
-  const police = game.police;
-  if (game.wanted >= 5) {
-    if (!police.helicopter) {
-      police.helicopter = { x: game.player.x + 300, y: game.player.y - 260, angle: 0, rotor: 0 };
-    }
-    const heli = police.helicopter;
-    const targetAngle = Math.atan2(game.player.y - heli.y, game.player.x - heli.x);
-    heli.angle = targetAngle;
-    const dist = distanceBetween(heli.x, heli.y, game.player.x, game.player.y);
-    if (dist > 130) {
-      heli.x += Math.cos(targetAngle) * 235 * dt;
-      heli.y += Math.sin(targetAngle) * 235 * dt;
-    }
-    heli.rotor += dt * 28;
-    // The helicopter keeps eyes on Jax: hiding is much harder at five stars.
-    if (dist < 360) police.hiddenTimer = 0;
-  } else {
-    police.helicopter = null;
+export function buildRoadblocks(heat, target) {
+  if (heat.wanted < 3) return [];
+  const blocks = [];
+  const offsets = [
+    { x: 260, y: 0 }, { x: -260, y: 0 }, { x: 0, y: 260 },
+  ];
+  const count = heat.wanted >= 4 ? 3 : 2;
+  for (let i = 0; i < count; i++) {
+    blocks.push({
+      x: target.x + offsets[i].x,
+      y: target.y + offsets[i].y,
+      angle: i * 1.1,
+      health: 140,
+    });
   }
+  return blocks;
 }
 
-export function canPoliceSeePlayer(game) {
-  const playerPos = game.player.vehicle || game.player;
-  for (const unit of game.police.units) {
-    if (unit.vehicle.destroyed) continue;
-    if (distanceBetween(unit.vehicle.x, unit.vehicle.y, playerPos.x, playerPos.y) < WANTED_SIGHT_RANGE) return true;
-  }
-  if (game.police.helicopter) {
-    if (distanceBetween(game.police.helicopter.x, game.police.helicopter.y, playerPos.x, playerPos.y) < 360) return true;
+export function createHelicopter() {
+  return { x: 0, y: 0, angle: 0, active: false, rotor: 0, searchlight: 0 };
+}
+
+export function updateHelicopter(heli, target, dt) {
+  if (!heli.active) return;
+  heli.rotor += dt * 28;
+  heli.searchlight += dt * 2;
+  const dx = target.x - heli.x;
+  const dy = target.y - heli.y;
+  const dist = Math.hypot(dx, dy) || 1;
+  const orbit = 120;
+  const desiredX = target.x + Math.cos(heli.searchlight) * orbit;
+  const desiredY = target.y + Math.sin(heli.searchlight) * orbit;
+  heli.x += (desiredX - heli.x) * Math.min(1, dt * 1.8);
+  heli.y += (desiredY - heli.y) * Math.min(1, dt * 1.8);
+  heli.angle = Math.atan2(dy, dx);
+  void dist;
+}
+
+export function anyPoliceSeesTarget(police, target) {
+  for (const unit of police) {
+    if (unit.exploded || unit.officerDown) continue;
+    if (Math.hypot(unit.x - target.x, unit.y - target.y) < 430) return true;
   }
   return false;
 }
 
-export function updatePolice(game, dt) {
-  const police = game.police;
-  const playerPos = game.player.vehicle || game.player;
-
-  if (game.wanted <= 0) {
-    // Stand down: clear units gradually.
-    police.units = [];
-    police.roadblocks = [];
-    police.helicopter = null;
-    game.vehicles = game.vehicles.filter((v) => !v.isPolice);
-    return;
-  }
-
-  police.seenNow = canPoliceSeePlayer(game);
-  if (police.seenNow) {
-    police.hiddenTimer = 0;
-    police.lastSeenX = playerPos.x;
-    police.lastSeenY = playerPos.y;
+export function updateHeat(heat, police, target, dt, playerChangedVehicle) {
+  if (heat.wanted <= 0) return;
+  const seen = anyPoliceSeesTarget(police, target);
+  if (seen) {
+    heat.hiddenTimer = 0;
+    heat.seenTimer += dt;
+    heat.decayClock = 0;
   } else {
-    // Switching cars or breaking line of sight speeds up the decay.
-    // Revision tuning: a car the police never saw Jax steal (not flagged
-    // stolen and not a police car) is the strongest disguise, standing
-    // still in shadow is next, and simply being unseen is the baseline.
-    const inFreshCar = game.player.vehicle && game.player.vehicle.stolen === false && !game.player.vehicle.isPolice;
-    const multiplier = inFreshCar ? 2.1 : (game.player.hidden ? 1.7 : 1);
-    police.hiddenTimer += dt * multiplier;
-    if (police.hiddenTimer >= WANTED_DECAY_SECONDS) {
-      police.hiddenTimer = 0;
-      setWantedSilent(game, game.wanted - 1);
-      if (game.wanted <= 0) return;
+    heat.hiddenTimer += dt;
+    heat.decayClock += dt * (playerChangedVehicle ? 1.7 : 1);
+    const needed = WANTED_DECAY_SECONDS - Math.min(3, heat.wanted);
+    if (heat.decayClock >= needed) {
+      heat.wanted -= 1;
+      heat.decayClock = 0;
+      if (heat.wanted < 0) heat.wanted = 0;
     }
   }
-
-  // Maintain the desired number of pursuers.
-  police.spawnTimer -= dt;
-  const desired = policeCountForWanted(game.wanted);
-  const alive = police.units.filter((u) => !u.vehicle.destroyed);
-  if (alive.length < desired && police.spawnTimer <= 0) {
-    police.spawnTimer = 1.1;
-    spawnPoliceUnit(game, playerPos.x, playerPos.y);
-  }
-  // Clean destroyed units after a short burn.
-  for (const unit of [...police.units]) {
-    if (unit.vehicle.destroyed && unit.vehicle.burning <= 0) removePoliceUnit(game, unit);
-  }
-
-  spawnRoadblocks(game);
-  if (game.wanted < 3) police.roadblocks = [];
-  updateHelicopter(game, dt);
-
-  for (const unit of police.units) {
-    updatePoliceUnit(game, unit, dt);
-  }
-  checkRoadblockCollisions(game);
-  checkBust(game);
 }
 
-function setWantedSilent(game, level) {
-  game.wanted = clamp(level, 0, WANTED_MAX);
-}
+export function updatePoliceUnit(unit, target, world, dt, roadblocks) {
+  if (unit.exploded || unit.officerDown) return;
+  const dx = target.x - unit.x;
+  const dy = target.y - unit.y;
+  const dist = Math.hypot(dx, dy) || 1;
 
-export function updatePoliceUnit(game, unit, dt) {
-  const vehicle = unit.vehicle;
-  if (vehicle.destroyed) return;
-  const playerPos = game.player.vehicle || game.player;
-  const seen = game.police.seenNow;
-  const targetX = seen ? playerPos.x : game.police.lastSeenX;
-  const targetY = seen ? playerPos.y : game.police.lastSeenY;
-  const dist = distanceBetween(vehicle.x, vehicle.y, targetX, targetY);
-
-  unit.mode = seen ? "chase" : "search";
-  unit.ramTimer -= dt;
-
-  // Blocking behaviour at higher heat: aim ahead of the player.
-  let aimX = targetX;
-  let aimY = targetY;
-  if (game.wanted >= 3 && unit.vehicle.id % 2 === 0 && game.player.vehicle) {
-    aimX = targetX + Math.cos(game.player.vehicle.angle) * 120;
-    aimY = targetY + Math.sin(game.player.vehicle.angle) * 120;
+  // Predict a blocking point ahead of the target when close, else chase.
+  let aimX = target.x;
+  let aimY = target.y;
+  if (roadblocks && roadblocks.length && dist < 360) {
+    aimX = target.x + Math.cos(unit.angle) * 40;
+    aimY = target.y;
   }
-
-  const desired = Math.atan2(aimY - vehicle.y, aimX - vehicle.x);
-  let diff = desired - vehicle.angle;
+  const desired = Math.atan2(aimY - unit.y, aimX - unit.x);
+  let diff = desired - unit.angle;
   while (diff > Math.PI) diff -= Math.PI * 2;
   while (diff < -Math.PI) diff += Math.PI * 2;
-  vehicle.angle += clamp(diff, -vehicle.spec.turn * dt, vehicle.spec.turn * dt);
+  unit.angle += Math.max(-unit.spec.turnRate * dt, Math.min(unit.spec.turnRate * dt, diff));
 
-  let targetSpeed = vehicle.spec.maxSpeed * (unit.mode === "chase" ? 0.94 : 0.55);
-  if (dist < 70) targetSpeed = vehicle.spec.maxSpeed * 0.45;
-  if (unit.ramTimer <= 0 && dist < 150 && dist > 34 && seen) {
-    targetSpeed = vehicle.spec.maxSpeed; // ram surge
-    if (dist < 44) unit.ramTimer = 1.6;
-  }
-  vehicle.speed += clamp(targetSpeed - vehicle.speed, -vehicle.spec.accel * dt, vehicle.spec.accel * dt);
+  const targetSpeed = dist > 90 ? unit.spec.maxSpeed : unit.spec.maxSpeed * 0.45;
+  unit.speed += (targetSpeed - unit.speed) * Math.min(1, dt * 2.2);
+  unit.x += Math.cos(unit.angle) * unit.speed * dt;
+  unit.y += Math.sin(unit.angle) * unit.speed * dt;
+  clampToWorld(unit, 30);
+  if (resolveBuildingCollision(world, unit, 20)) unit.speed *= 0.4;
 
-  const nextX = vehicle.x + Math.cos(vehicle.angle) * vehicle.speed * dt;
-  const nextY = vehicle.y + Math.sin(vehicle.angle) * vehicle.speed * dt;
-  if (game.world.collides(nextX, nextY, vehicle.width * 0.36)) {
-    vehicle.speed *= -0.3;
-    vehicle.angle += 0.6 * dt * 3;
-  } else {
-    vehicle.x = clamp(nextX, 24, game.world.width - 24);
-    vehicle.y = clamp(nextY, 24, game.world.height - 24);
-  }
+  // Ram damage is handled by vehicle collision checks in main.
+  void dx; void dy;
 }
 
-export function checkRoadblockCollisions(game) {
-  const playerVehicle = game.player.vehicle;
-  if (!playerVehicle) return;
-  for (const block of game.police.roadblocks) {
-    if (distanceBetween(playerVehicle.x, playerVehicle.y, block.x, block.y) < 52 && Math.abs(playerVehicle.speed) > 40) {
-      playerVehicle.speed *= 0.35;
-      game.damageVehicle(playerVehicle, 9);
-      game.spawnSparks(playerVehicle.x, playerVehicle.y);
-    }
-  }
-}
-
-export function checkBust(game) {
-  if (game.player.vehicle) return; // cannot bust a moving driver directly
-  for (const unit of game.police.units) {
-    if (unit.vehicle.destroyed) continue;
-    const d = distanceBetween(unit.vehicle.x, unit.vehicle.y, game.player.x, game.player.y);
-    if (d < 64 && game.wanted >= 1) {
-      game.bustedTimer = (game.bustedTimer || 0) + 0.016;
-      if (game.bustedTimer > 1.6) {
-        game.onBusted();
-        game.bustedTimer = 0;
-      }
-      return;
-    }
-  }
-  game.bustedTimer = Math.max(0, (game.bustedTimer || 0) - 0.03);
+export function updatePolice(heat, police, target, world, dt) {
+  for (const unit of police) updatePoliceUnit(unit, target, world, dt, null);
 }

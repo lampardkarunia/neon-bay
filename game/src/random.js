@@ -1,63 +1,59 @@
-// random.js - Deterministic seeded RNG (mulberry32) for NEON BAY.
-// Shot mode depends on this: same seed must always produce the same city.
+// random.js - Deterministic seeded RNG (mulberry32) plus small helpers.
+// Shot mode relies on this: same seed must always build the same city.
 
-export function hashSeed(input) {
-  let h = 2166136261 >>> 0;
-  const text = String(input);
-  for (let i = 0; i < text.length; i++) {
-    h ^= text.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return h >>> 0;
-}
-
-export class SeededRandom {
-  constructor(seed) {
-    this.state = (typeof seed === "number" ? seed >>> 0 : hashSeed(seed)) || 1;
-    this.seedValue = this.state;
-  }
-
-  next() {
-    this.state = (this.state + 0x6d2b79f5) >>> 0;
-    let t = this.state;
+export function createRng(seed) {
+  let state = (Number(seed) >>> 0) || 1;
+  function next() {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = state;
     t = Math.imul(t ^ (t >>> 15), t | 1);
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   }
-
-  range(min, max) {
-    return min + this.next() * (max - min);
-  }
-
-  int(min, maxInclusive) {
-    return Math.floor(this.range(min, maxInclusive + 1));
-  }
-
-  pick(array) {
-    return array[Math.floor(this.next() * array.length)];
-  }
-
-  chance(probability) {
-    return this.next() < probability;
-  }
-
-  shuffle(array) {
-    const copy = array.slice();
-    for (let i = copy.length - 1; i > 0; i--) {
-      const j = Math.floor(this.next() * (i + 1));
-      const tmp = copy[i];
-      copy[i] = copy[j];
-      copy[j] = tmp;
-    }
-    return copy;
-  }
+  return {
+    next,
+    range(min, max) {
+      return min + next() * (max - min);
+    },
+    int(min, max) {
+      return Math.floor(min + next() * (max - min + 1));
+    },
+    pick(list) {
+      if (!list || list.length === 0) return undefined;
+      return list[Math.floor(next() * list.length)];
+    },
+    chance(probability) {
+      return next() < probability;
+    },
+    sign() {
+      return next() < 0.5 ? -1 : 1;
+    },
+  };
 }
 
-export function createRandom(seed) {
-  return new SeededRandom(seed === undefined ? 1337 : seed);
+let activeRng = createRng(12345);
+
+export function setSeed(seed) {
+  activeRng = createRng(seed);
+  return activeRng;
 }
 
-export function randomFromSeed(seed) {
-  const rng = new SeededRandom(seed);
-  return () => rng.next();
+export function getRng() {
+  return activeRng;
+}
+
+export function rand(min, max) {
+  return activeRng.range(min, max);
+}
+
+export function randInt(min, max) {
+  return activeRng.int(min, max);
+}
+
+export function pick(list) {
+  return activeRng.pick(list);
+}
+
+export function chance(p) {
+  return activeRng.chance(p);
 }
